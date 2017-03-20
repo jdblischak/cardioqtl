@@ -1,0 +1,76 @@
+# Snakefile
+
+# To run on RCC Midway use `bash submit-snakemake.sh`
+
+import glob
+import os
+from snakemake.utils import R
+
+# Configuration ----------------------------------------------------------------
+
+# Paths must end with forward slash
+dir_proj = "/project2/gilad/jdblischak/cardioqtl/"
+dir_data = dir_proj + "data/"
+dir_fq = dir_data + "fastq/"
+dir_kal = dir_data + "kallisto/"
+scratch = "/scratch/midway2/jdblischak/"
+#dir_code = dir_proj + "code/"
+
+f_transcripts_fa =  scratch + "transcriptome-ensembl-GRCh38-rel79.fa.gz"
+f_transcripts_idx =  scratch + "transcriptome-ensembl-GRCh38-rel79.idx"
+
+assert os.path.exists(dir_proj), "Project directory exists"
+assert os.path.exists(scratch), "Scratch directory exists"
+
+for d in [dir_data, dir_fq, dir_kal]:
+    if not os.path.isdir(d):
+        os.mkdir(d)
+
+# Input samples ----------------------------------------------------------------
+
+#files_fq = glob.glob(dir_fq + "*fastq.gz")
+#samples = [os.path.basename(x).split("-")[0] for x in files_fq]
+
+samples = set(glob_wildcards(dir_fq + "{samples}-H{flow_cell}-l{lane}.fastq.gz").samples)
+
+# Functions --------------------------------------------------------------------
+
+# Find all fastq.gz files for a given sample.
+# Inspired by this post on the Snakemake Google Group:
+# https://groups.google.com/forum/#!searchin/snakemake/multiple$20input$20files%7Csort:relevance/snakemake/bpTnr7FgDuQ/ybacyom6BQAJ
+def merge_fastq(wc):
+    suffixes = glob_wildcards(dir_fq + "{s}-{{suffix}}.fastq.gz".format(s=wc.sample)).suffix
+#    import pdb; pdb.set_trace()
+    files = expand(dir_fq + "{s}-{{suffix}}.fastq.gz".format(s=wc.sample),
+                   suffix = suffixes)
+    return files
+
+# Targets ----------------------------------------------------------------------
+
+rule run_kallisto:
+    input: expand(dir_kal + "{sample}/abundance.tsv", sample = samples)
+
+rule prepare_kallisto:
+    input: f_transcripts_idx
+
+# Rules ------------------------------------------------------------------------
+
+# This is release 79 from 2015-03. Should eventually update to release
+# 86 from 2016-10.
+rule download_transcriptome:
+    output: f_transcripts_fa
+    shell: "wget -O {output} http://bio.math.berkeley.edu/kallisto/transcriptomes/Homo_sapiens.GRCh38.rel79.cdna.all.fa.gz"
+
+rule kallisto_index:
+    input:  f_transcripts_fa,
+    output: f_transcripts_idx
+    shell: "kallisto index -i {output} {input}"
+
+rule kallisto_quant:
+    input: read1 = merge_fastq,
+           index = f_transcripts_idx
+    output: dir_kal + "{sample}/abundance.tsv"
+    params: outdir = dir_kal + "{sample}"
+    threads: 8
+    shell: "kallisto quant -i {input.index} -o {params.outdir} --single -l 200 -s 20 -t {threads} {input.read1}"
+
