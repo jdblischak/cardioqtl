@@ -33,5 +33,11 @@ suppressMessages(
                       reader = read_tsv)
 )
 
+# tximport discards the names. The sample name is the directory that contains
+# the data file.
+samples <- basename(dirname(files))
+tx_list <- lapply(tx_list,
+                  function(x) {if (is.matrix(x)) colnames(x) <- samples; x})
+
 write.table(tx_list$counts, file = "", quote = FALSE, sep = "\t",
-            row.names = FALSE)
+            row.names = TRUE)

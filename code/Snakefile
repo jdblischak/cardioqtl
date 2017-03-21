@@ -26,6 +26,10 @@ for d in [dir_data, dir_fq, dir_kal]:
     if not os.path.isdir(d):
         os.mkdir(d)
 
+# http://mar2015.archive.ensembl.org/index.html
+ensembl_archive = "mar2015.archive.ensembl.org"
+ensembl_rel = "rel79"
+
 # Input samples ----------------------------------------------------------------
 
 #files_fq = glob.glob(dir_fq + "*fastq.gz")
@@ -46,6 +50,9 @@ def merge_fastq(wc):
     return files
 
 # Targets ----------------------------------------------------------------------
+
+rule quantify_expression:
+    input:  dir_data + "gene-exp-all.txt"
 
 rule run_kallisto:
     input: expand(dir_kal + "{sample}/abundance.tsv", sample = samples)
@@ -74,3 +81,12 @@ rule kallisto_quant:
     threads: 8
     shell: "kallisto quant -i {input.index} -o {params.outdir} --single -l 200 -s 20 -t {threads} {input.read1}"
 
+rule download_ensembl_info:
+    output: dir_data + "ensembl-" + ensembl_rel + ".txt"
+    shell: "Rscript download-ensembl-info.R {ensembl_archive} > {output}"
+
+rule create_gene_exp_matrix:
+    input: expand(dir_kal + "{sample}/abundance.tsv", sample = samples),
+           ensembl = dir_data + "ensembl-" + ensembl_rel + ".txt"
+    output: dir_data + "gene-exp-all.txt"
+    shell: "Rscript create-gene-exp-matrix.R {input.ensembl} {dir_kal} > {output}"
