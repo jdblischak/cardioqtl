@@ -13,5 +13,19 @@
     {
 	"mem" : 16000,
 	"tasks" : 8
+    },
+    "subread_index" :
+    {
+	"mem" : 8000
+    },
+    "subjunc" :
+    {
+	"mem": 16000,
+	"tasks" : 8
+    },
+    "featureCounts" :
+    {
+	"mem": 8000,
+	"tasks": 8
     }
 }

@@ -14,7 +14,11 @@ dir_data = dir_proj + "data/"
 dir_fq = dir_data + "fastq/"
 dir_kal = dir_data + "kallisto/"
 scratch = "/scratch/midway2/jdblischak/"
-#dir_code = dir_proj + "code/"
+dir_genome = scratch + "hg38/"
+dir_fq_tmp = scratch + "cardioqtl-fastq/"
+dir_bam = scratch + "cardioqtl-bam/"
+dir_counts = scratch + "cardioqtl-counts/"
+dir_vcf = dir_data + "vcf/"
 
 f_transcripts_fa =  scratch + "transcriptome-ensembl-GRCh38-rel79.fa.gz"
 f_transcripts_idx =  scratch + "transcriptome-ensembl-GRCh38-rel79.idx"
@@ -22,13 +26,16 @@ f_transcripts_idx =  scratch + "transcriptome-ensembl-GRCh38-rel79.idx"
 assert os.path.exists(dir_proj), "Project directory exists"
 assert os.path.exists(scratch), "Scratch directory exists"
 
-for d in [dir_data, dir_fq, dir_kal]:
+for d in [dir_data, dir_fq, dir_kal, dir_genome,
+          dir_fq_tmp, dir_bam, dir_counts, dir_vcf]:
     if not os.path.isdir(d):
         os.mkdir(d)
 
 # http://mar2015.archive.ensembl.org/index.html
 ensembl_archive = "mar2015.archive.ensembl.org"
 ensembl_rel = "rel79"
+
+chromosomes = [str(x) for x in range(1, 23)] + ["X", "Y", "M"]
 
 # Input samples ----------------------------------------------------------------
 
@@ -60,7 +67,16 @@ rule run_kallisto:
 rule prepare_kallisto:
     input: f_transcripts_idx
 
-# Rules ------------------------------------------------------------------------
+rule run_featureCounts:
+    input: expand(dir_counts + "{sample}.genecounts.txt", sample = samples)
+
+rule run_subjunc:
+    input: expand(dir_bam + "{sample}.bam", sample = samples)
+
+rule prepare_subjunc:
+    input: dir_genome + "hg38.reads"
+
+# Quanitfy expression with kallisto --------------------------------------------
 
 # This is release 79 from 2015-03. Should eventually update to release
 # 86 from 2016-10.
@@ -90,3 +106,47 @@ rule create_gene_exp_matrix:
            ensembl = dir_data + "ensembl-" + ensembl_rel + ".txt"
     output: dir_data + "gene-exp-all.txt"
     shell: "Rscript create-gene-exp-matrix.R {input.ensembl} {dir_kal} > {output}"
+
+# Quanitify expression with Subjunc/featureCounts ------------------------------
+
+rule download_genome:
+    output: dir_genome + "chr{chr}.fa.gz"
+    params: chr = "{chr}"
+    shell: "wget -O {output} http://hgdownload.cse.ucsc.edu/goldenPath/hg38/chromosomes/chr{params.chr}.fa.gz"
+
+rule unzip_chromosome_fasta:
+    input: dir_genome + "chr{chr}.fa.gz"
+    output: temp(dir_genome + "chr{chr}.fa")
+    shell: "zcat {input} > {output}"
+
+rule subread_index:
+    input: expand(dir_genome + "chr{chr}.fa", chr = chromosomes)
+    output: dir_genome + "hg38.reads"
+    params: prefix = dir_genome + "hg38"
+    shell: "subread-buildindex -o {params.prefix} {input}"
+
+rule combine_fastq:
+    input: merge_fastq
+    output: temp(dir_fq_tmp + "{sample}.fastq")
+    shell: "zcat {input} > {output}"
+
+rule subjunc:
+    input: read = dir_fq_tmp + "{sample}.fastq",
+           index = dir_genome + "hg38.reads"
+    output: dir_bam + "{sample}.bam"
+    params: prefix = dir_genome + "hg38"
+    threads: 8
+    shell: "subjunc -i {params.prefix} -r {input.read} -u -T {threads} > {output}"
+
+rule create_exons_saf:
+    output: dir_genome + "exons.saf"
+    shell: "Rscript create-exons.R {ensembl_archive} >  {output}"
+
+rule feauturecounts:
+    input: bam = dir_bam + "{sample}.bam",
+           exons = dir_genome + "exons.saf"
+    output: dir_counts + "{sample}.genecounts.txt"
+    threads: 8
+    shell: "featureCounts -a {input.exons} -F SAF -T {threads} -o {output} {input.bam}"
+
+# Verify identity with verifyBamID ---------------------------------------------
