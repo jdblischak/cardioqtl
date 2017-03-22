@@ -44,7 +44,11 @@ chromosomes = [str(x) for x in range(1, 23)] + ["X", "Y", "M"]
 #files_fq = glob.glob(dir_fq + "*fastq.gz")
 #samples = [os.path.basename(x).split("-")[0] for x in files_fq]
 
-samples = set(glob_wildcards(dir_fq + "{samples}-H{flow_cell}-l{lane}.fastq.gz").samples)
+samples = set(glob_wildcards(dir_fq + "{samples}-H{flow_cell}-l{lane,[1-8]}.fastq.gz").samples)
+
+# Constrain sample wildcard to always be all numbers. Necessary to
+# resolve some of the complex rules.
+wildcard_constraints: sample = "\d+"
 
 # Functions --------------------------------------------------------------------
 
@@ -52,10 +56,10 @@ samples = set(glob_wildcards(dir_fq + "{samples}-H{flow_cell}-l{lane}.fastq.gz")
 # Inspired by this post on the Snakemake Google Group:
 # https://groups.google.com/forum/#!searchin/snakemake/multiple$20input$20files%7Csort:relevance/snakemake/bpTnr7FgDuQ/ybacyom6BQAJ
 def merge_fastq(wc):
-    suffixes = glob_wildcards(dir_fq + "{s}-{{suffix}}.fastq.gz".format(s=wc.sample)).suffix
-#    import pdb; pdb.set_trace()
-    files = expand(dir_fq + "{s}-{{suffix}}.fastq.gz".format(s=wc.sample),
-                   suffix = suffixes)
+    unknowns = glob_wildcards(dir_fq + "{s}-H{{flow_cell}}-l{{lane,[1-8]}}.fastq.gz".format(s=wc.sample))
+    #import pdb; pdb.set_trace()
+    files = expand(dir_fq + "{s}-H{{flow_cell}}-l{{lane}}.fastq.gz".format(s=wc.sample), zip,
+                   flow_cell = unknowns.flow_cell, lane = unknowns.lane)
     return files
 
 # Targets ----------------------------------------------------------------------
@@ -138,17 +142,27 @@ rule combine_fastq:
 rule subjunc:
     input: read = dir_fq_tmp + "{sample}.fastq",
            index = dir_genome + "hg38.reads"
-    output: dir_bam + "{sample}.bam"
+    output: temp(dir_bam + "{sample}.bam")
     params: prefix = dir_genome + "hg38"
     threads: 8
     shell: "subjunc -i {params.prefix} -r {input.read} -u -T {threads} > {output}"
+
+rule sort_bam:
+    input: dir_bam + "{sample}.bam"
+    output: dir_bam + "{sample}-sort.bam"
+    shell: "samtools sort -o {output} {input}"
+
+rule index_bam:
+    input: dir_bam + "{sample}-sort.bam"
+    output: dir_bam + "{sample}-sort.bam.bai"
+    shell: "samtools index {input}"
 
 rule create_exons_saf:
     output: dir_genome + "exons.saf"
     shell: "Rscript create-exons.R {ensembl_archive} >  {output}"
 
 rule feauturecounts:
-    input: bam = dir_bam + "{sample}.bam",
+    input: bam = dir_bam + "{sample}-sort.bam",
            exons = dir_genome + "exons.saf"
     output: dir_counts + "{sample}.genecounts.txt"
     threads: 8
@@ -179,6 +193,9 @@ rule convert_to_bed:
         saf.close()
         bed.close()
 
+
+# Add rule that unzips vcf (will need gzip and "rt") and adds chr to chromosome name
+
 # Select only those SNPs in annotated exons of protein-coding genes
 rule select_exonic_snps:
     input: vcf = dir_vcf + "dox-hg38-chr{CHR}.vcf.gz",
@@ -190,12 +207,13 @@ rule select_exonic_snps:
 rule combine_snps:
     input: vcf = expand(dir_vcf  + "dox-hg38-chr{CHR}-exons.vcf", CHR = chromosomes[:-3])
     output: vcf = dir_vcf + "dox-hg38-exons.vcf"
-    shell: "cat <(head -n 1 {input.vcf[0]}) <(cat {input.vcf} | grep -v CHROM) > {output.vcf}"
+    shell: "cat <(grep CHROM {input.vcf[0]}) <(cat {input.vcf} | grep -v '#') > {output.vcf}"
 
 # Run verifyBamID to obtain the best individual match for the BAM file
 rule verify_bam:
     input: vcf =  dir_vcf + "dox-hg38-exons.vcf",
-         bam = dir_bam + "{sample}.bam"
+           bam = dir_bam + "{sample}-sort.bam",
+           index = dir_bam + "{sample}-sort.bam.bai"
     output: dir_id + "{sample}.bestSM"
     params: prefix = dir_id + "{sample}",
             individual = "{sample}"
