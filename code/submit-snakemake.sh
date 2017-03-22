@@ -9,5 +9,7 @@ snakemake \
         --mem={cluster.mem} \
         --nodes={cluster.n} \
         --tasks-per-node={cluster.tasks} \
-        --partition=broadwl" \
+        --partition=broadwl \
+        --job-name={cluster.name} \
+	--output={cluster.logfile}" \
     $*

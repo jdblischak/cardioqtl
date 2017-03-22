@@ -20,6 +20,7 @@ dir_bam = scratch + "cardioqtl-bam/"
 dir_counts = scratch + "cardioqtl-counts/"
 dir_vcf = dir_data + "vcf/"
 dir_id = dir_data + "id/"
+dir_log = "log/"
 
 f_transcripts_fa =  scratch + "transcriptome-ensembl-GRCh38-rel79.fa.gz"
 f_transcripts_idx =  scratch + "transcriptome-ensembl-GRCh38-rel79.idx"
@@ -29,7 +30,7 @@ assert os.path.exists(scratch), "Scratch directory exists"
 
 for d in [dir_data, dir_fq, dir_kal, dir_genome,
           dir_fq_tmp, dir_bam, dir_counts, dir_vcf,
-          dir_id]:
+          dir_id, dir_log]:
     if not os.path.isdir(d):
         os.mkdir(d)
 
@@ -74,7 +75,7 @@ rule prepare_kallisto:
     input: f_transcripts_idx
 
 rule run_verifyBamID:
-    input: expand(dir_id + "{sample}.bestSM", sample = samples)
+    input: dir_data + "verify.txt"
 
 rule run_featureCounts:
     input: expand(dir_counts + "{sample}.genecounts.txt", sample = samples)
@@ -194,11 +195,27 @@ rule convert_to_bed:
         bed.close()
 
 
-# Add rule that unzips vcf (will need gzip and "rt") and adds chr to chromosome name
+# Add "chr" to chromosome name
+rule add_chr_to_vcf:
+    input: dir_vcf + "dox-hg38-chr{CHR}.vcf.gz"
+    output: temp(dir_vcf + "dox-hg38-chr{CHR}-chr.vcf")
+    run:
+        import gzip
+
+        vcf_in = gzip.open(input[0], "rt")
+        vcf_out = open(output[0], "w")
+        for line in vcf_in:
+            if line[0] == "#":
+                vcf_out.write(line)
+            else:
+                vcf_out.write("chr" + line)
+
+        vcf_in.close()
+        vcf_out.close()
 
 # Select only those SNPs in annotated exons of protein-coding genes
 rule select_exonic_snps:
-    input: vcf = dir_vcf + "dox-hg38-chr{CHR}.vcf.gz",
+    input: vcf = dir_vcf + "dox-hg38-chr{CHR}-chr.vcf",
            exons = dir_genome + "exons.bed"
     output: vcf = temp(dir_vcf + "dox-hg38-chr{CHR}-exons.vcf")
     shell: "bedtools intersect -a {input.vcf} -b {input.exons} -u -header > {output.vcf}"
@@ -218,3 +235,90 @@ rule verify_bam:
     params: prefix = dir_id + "{sample}",
             individual = "{sample}"
     shell: "verifyBamID --vcf {input.vcf} --bam {input.bam} --best --ignoreRG --smID {params.individual} --out {params.prefix}"
+
+rule parse_verify:
+    input: selfSM = dir_id + "{sample}.selfSM",
+           bestSM = dir_id + "{sample}.bestSM",
+           depthSM = dir_id + "{sample}.depthSM"
+    output: dir_id + "{sample}-results.txt"
+    run:
+        selfSM = open(input.selfSM, "rt")
+        bestSM = open(input.bestSM, "rt")
+        depthSM = open(input.depthSM, "rt")
+        results = open(output[0], "w")
+
+        for line in selfSM:
+            # Confirm the header columns
+            if line[0] == "#":
+                cols = line.strip().split("\t")
+                assert cols[0] == "#SEQ_ID" and cols[2] == "CHIP_ID" and \
+                       cols[3] == "#SNPS" and cols[4] == "#READS" and \
+                       cols[5] == "AVG_DP" and cols[6] == "FREEMIX" and \
+                       cols[11] == "CHIPMIX", "selfSM columns are as expected"
+            else:
+                cols = line.strip().split("\t")
+                seq_id = cols[0]
+                chip_id = cols[2]
+                assert chip_id == seq_id, "selfSM compares to self"
+                snps = cols[3]
+                reads = cols[4]
+                avg_dp = cols[5]
+                selfSM_freemix = cols[6]
+                selfSM_chipmix = cols[11]
+
+        for line in bestSM:
+            # Confirm the header columns
+            if line[0] == "#":
+                cols = line.strip().split("\t")
+                assert cols[0] == "#SEQ_ID" and cols[2] == "CHIP_ID" and \
+                       cols[3] == "#SNPS" and cols[4] == "#READS" and \
+                       cols[5] == "AVG_DP" and cols[6] == "FREEMIX" and \
+                       cols[11] == "CHIPMIX", "bestSM columns are as expected"
+            else:
+                cols = line.strip().split("\t")
+                seq_id = cols[0]
+                bestSM_chip_id = cols[2]
+                match = str(bestSM_chip_id == seq_id).upper()
+                bestSM_freemix = cols[6]
+                bestSM_chipmix = cols[11]
+
+        # Report the number of SNPs that had more than a minimum read depth
+        depth_min = 10
+        snps_w_min = 0
+        for line in depthSM:
+            # Confirm the header columns
+            if line[0] == "#":
+                cols = line.strip().split("\t")
+                assert cols[1] == "DEPTH" and cols[2] == "#SNPs", \
+                       "depthSM columns are as expected"
+            else:
+                cols = line.strip().split("\t")
+                depth = int(cols[1])
+                n_snps = int(cols[2])
+                if depth >= depth_min:
+                    snps_w_min = snps_w_min + n_snps
+
+        out_header = ["id", "best", "match",
+                      "self_freemix", "self_chipmix",
+                      "best_freemix", "best_chipmix",
+                      "snps", "reads", "avg_dp",
+                      "min_dp", "snps_w_min"]
+        out_cols = [seq_id, bestSM_chip_id, match,
+                    selfSM_freemix, selfSM_chipmix,
+                    bestSM_freemix, bestSM_chipmix,
+                    snps, reads, avg_dp,
+                    str(depth_min), str(snps_w_min)]
+        results.write("\t".join(out_header) + "\n")
+        results.write("\t".join(out_cols) + "\n")
+
+        selfSM.close()
+        bestSM.close()
+        depthSM.close()
+        results.close()
+
+rule combine_verify:
+    input: expand(dir_id + "{sample}-results.txt", sample = samples)
+    output: dir_data + "verify.txt"
+    shell:
+        "head -n 1 {input[0]} > {output};"
+        "cat {input} | grep -v \"id\" | sort -k1n >> {output}"

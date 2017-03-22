@@ -1,3 +1,4 @@
 data/
 code/.snakemake/
+code/log/
 slurm*
