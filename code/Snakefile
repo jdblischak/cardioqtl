@@ -19,6 +19,7 @@ dir_fq_tmp = scratch + "cardioqtl-fastq/"
 dir_bam = scratch + "cardioqtl-bam/"
 dir_counts = scratch + "cardioqtl-counts/"
 dir_vcf = dir_data + "vcf/"
+dir_id = dir_data + "id/"
 
 f_transcripts_fa =  scratch + "transcriptome-ensembl-GRCh38-rel79.fa.gz"
 f_transcripts_idx =  scratch + "transcriptome-ensembl-GRCh38-rel79.idx"
@@ -27,7 +28,8 @@ assert os.path.exists(dir_proj), "Project directory exists"
 assert os.path.exists(scratch), "Scratch directory exists"
 
 for d in [dir_data, dir_fq, dir_kal, dir_genome,
-          dir_fq_tmp, dir_bam, dir_counts, dir_vcf]:
+          dir_fq_tmp, dir_bam, dir_counts, dir_vcf,
+          dir_id]:
     if not os.path.isdir(d):
         os.mkdir(d)
 
@@ -66,6 +68,9 @@ rule run_kallisto:
 
 rule prepare_kallisto:
     input: f_transcripts_idx
+
+rule run_verifyBamID:
+    input: expand(dir_id + "{sample}.bestSM", sample = samples)
 
 rule run_featureCounts:
     input: expand(dir_counts + "{sample}.genecounts.txt", sample = samples)
@@ -150,3 +155,48 @@ rule feauturecounts:
     shell: "featureCounts -a {input.exons} -F SAF -T {threads} -o {output} {input.bam}"
 
 # Verify identity with verifyBamID ---------------------------------------------
+
+# Convert exons in SAF format to BED format. Duplicate exons are maintained.
+rule convert_to_bed:
+    input: saf = dir_genome + "exons.saf"
+    output: bed = dir_genome + "exons.bed"
+    run:
+        saf = open(input.saf, "r")
+        bed = open(output.bed, "w")
+        # Discard header
+        saf.readline()
+
+        for line in saf:
+            cols = line.strip().split("\t")
+            id = cols[0]
+            chr = cols[1]
+            start = str(int(cols[2]) - 1)
+            end = cols[3]
+            strand = cols[4]
+            entry = "%s\t%s\t%s\t%s\t%s\t%s\n"%(chr, start, end, id, 0, strand)
+            bed.write(entry)
+
+        saf.close()
+        bed.close()
+
+# Select only those SNPs in annotated exons of protein-coding genes
+rule select_exonic_snps:
+    input: vcf = dir_vcf + "dox-hg38-chr{CHR}.vcf.gz",
+           exons = dir_genome + "exons.bed"
+    output: vcf = temp(dir_vcf + "dox-hg38-chr{CHR}-exons.vcf")
+    shell: "bedtools intersect -a {input.vcf} -b {input.exons} -u -header > {output.vcf}"
+
+# Combine exonic SNPs into one file
+rule combine_snps:
+    input: vcf = expand(dir_vcf  + "dox-hg38-chr{CHR}-exons.vcf", CHR = chromosomes[:-3])
+    output: vcf = dir_vcf + "dox-hg38-exons.vcf"
+    shell: "cat <(head -n 1 {input.vcf[0]}) <(cat {input.vcf} | grep -v CHROM) > {output.vcf}"
+
+# Run verifyBamID to obtain the best individual match for the BAM file
+rule verify_bam:
+    input: vcf =  dir_vcf + "dox-hg38-exons.vcf",
+         bam = dir_bam + "{sample}.bam"
+    output: dir_id + "{sample}.bestSM"
+    params: prefix = dir_id + "{sample}",
+            individual = "{sample}"
+    shell: "verifyBamID --vcf {input.vcf} --bam {input.bam} --best --ignoreRG --smID {params.individual} --out {params.prefix}"

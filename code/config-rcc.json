@@ -27,5 +27,13 @@
     {
 	"mem": 8000,
 	"tasks": 8
+    },
+    "select_exonic_snps" :
+    {
+	"mem" : 8000
+    },
+    "verify_bam" :
+    {
+	"mem" : 8000
     }
 }
