@@ -231,7 +231,9 @@ rule verify_bam:
     input: vcf =  dir_vcf + "dox-hg38-exons.vcf",
            bam = dir_bam + "{sample}-sort.bam",
            index = dir_bam + "{sample}-sort.bam.bai"
-    output: dir_id + "{sample}.bestSM"
+    output: selfSM = dir_id + "{sample}.selfSM",
+            bestSM = dir_id + "{sample}.bestSM",
+            depthSM = dir_id + "{sample}.depthSM"
     params: prefix = dir_id + "{sample}",
             individual = "{sample}"
     shell: "verifyBamID --vcf {input.vcf} --bam {input.bam} --best --ignoreRG --smID {params.individual} --out {params.prefix}"
