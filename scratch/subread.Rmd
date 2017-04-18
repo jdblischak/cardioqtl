@@ -1,0 +1,168 @@
+---
+title: "Subread counts"
+output: html_document
+---
+
+**Last updated:** `r Sys.Date()`
+
+**Code version:** `r git2r::commits()[[1]]@sha`
+
+Some initial exploration of the cardioqtl data.
+
+## Setup
+
+```{r packages, message=FALSE}
+library("biomaRt")
+library("edgeR")
+library("ggplot2")
+library("gplots")
+```
+
+Input Subread counts.
+
+```{r}
+e <- read.delim("../data/counts-subread.txt", check.names = FALSE)
+dim(e)
+```
+
+## Initial inspection
+
+How many zeros?
+
+```{r count-zeros}
+zeros <- apply(e, 1, function(x) all(x == 0))
+sum(zeros)
+```
+
+Remove the zeros.
+
+```{r remove-zeros}
+e_detect <- e[!zeros, ]
+dim(e_detect)
+```
+
+How large are the differences in sequencing depth?
+
+```{r totals}
+totals <- colSums(e_detect)
+summary(totals)
+hist(totals)
+```
+
+How different are the genes in their expression level?
+
+```{r}
+hist(log2(rowSums(e_detect)))
+```
+
+## Determine a cutoff
+
+```{r}
+cpm_all <- cpm(e_detect, log = TRUE)
+cpm_all_median <- apply(cpm_all, 1, median)
+```
+
+```{r}
+summary(cpm_all_median)
+plot(density(cpm_all_median))
+abline(0, 1, col = "red")
+sum(cpm_all_median > 0)
+e_expr <- e_detect[cpm_all_median > 0, ]
+dim(e_expr)
+```
+
+## TMM normalize
+
+```{r}
+norm_factors <- calcNormFactors(e_expr)
+summary(norm_factors)
+lib_sizes <- colSums(e_expr) * norm_factors
+summary(lib_sizes)
+cpm_expr <- cpm(e_expr, log = TRUE, lib.size = lib_sizes)
+```
+
+## Clustering
+
+How do they cluster?
+
+```{r cluster-subread}
+hc <- hclust(dist(t(cpm_expr)))
+plot(hc)
+heatmap.2(cor(cpm_expr), trace = "none")
+```
+
+PCA
+
+```{r pca}
+pca <- prcomp(t(cpm_expr), scale. = TRUE)
+plot(pca)
+d_pca <- data.frame(id = rownames(pca$x), pca$x)
+ggplot(d_pca, aes(x = PC1, y = PC2)) +
+  geom_text(aes(label = id)) +
+  theme_bw()
+```
+
+These two have the lowest total counts. Remove 26302 and 110232.
+
+```{r}
+sort(totals)[1:5]
+cpm_qual <- cpm_expr[, !(colnames(cpm_expr) %in% c("26302", "110232"))]
+```
+
+PCA
+
+```{r pca2}
+pca <- prcomp(t(cpm_qual), scale. = TRUE)
+plot(pca)
+d_pca <- data.frame(id = rownames(pca$x), pca$x)
+ggplot(d_pca, aes(x = PC1, y = PC2)) +
+  geom_text(aes(label = id)) +
+  theme_bw()
+```
+
+```{r}
+heatmap.2(cor(cpm_qual), trace = "none")
+```
+
+## Top expressed genes
+
+```{r top}
+gexp_medians <- apply(cpm_qual, 1, median)
+gexp_medians <- sort(gexp_medians, decreasing = TRUE)
+head(gexp_medians)
+```
+
+```{r biomart}
+ensembl <- useMart(host = "mar2015.archive.ensembl.org",
+                   biomart = "ENSEMBL_MART_ENSEMBL",
+                   dataset = "hsapiens_gene_ensembl")
+descript <- getBM(attributes = c("ensembl_gene_id",
+                                 "chromosome_name",
+                                 "external_gene_name",
+                                 "gene_biotype",
+                                 "source",
+                                 "description"),
+                  filters = "ensembl_gene_id",
+                  values = head(names(gexp_medians)),
+                  mart = ensembl)
+descript
+```
+
+
+```{r}
+top100 <- getBM(attributes = "external_gene_name",
+                filters = "ensembl_gene_id",
+                values = head(names(gexp_medians), 100),
+                mart = ensembl)
+cat(top100$external_gene_name, sep = "\n")
+```
+
+As a sanity check, I quickly performed an enrichment analysis of these 100 genes against all genes using [Lynx](http://lynx.ci.uchicago.edu/).
+They are enriched for structural proteins (lots of actin and myosin terms) and the top disease associations are for cardiomyopathies.
+
+## Session information
+
+```{r session-info}
+sessionInfo()
+```
+
