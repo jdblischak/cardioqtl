@@ -77,6 +77,9 @@ rule prepare_kallisto:
 rule run_verifyBamID:
     input: dir_data + "verify.txt"
 
+rule counts_for_gemma:
+    input: dir_data + "counts-normalized.txt"
+
 rule run_featureCounts:
     input: expand(dir_counts + "{sample}.genecounts.txt", sample = samples)
 
@@ -168,6 +171,22 @@ rule feauturecounts:
     output: dir_counts + "{sample}.genecounts.txt"
     threads: 8
     shell: "featureCounts -a {input.exons} -F SAF -T {threads} -o {output} {input.bam}"
+
+rule combine_featurecounts:
+    input: expand(dir_counts + "{sample}.genecounts.txt", sample = samples)
+    output: dir_data + "counts-subread.txt"
+    shell: "Rscript combine-featurecounts.R {input} > {output}"
+
+
+rule clean_counts:
+    input: dir_data + "counts-subread.txt"
+    output: dir_data + "counts-clean.txt"
+    shell: "Rscript clean-counts.R {input} > {output}"
+
+rule normalize_counts:
+    input: dir_data + "counts-clean.txt"
+    output: dir_data + "counts-normalized.txt"
+    shell: "Rscript normalize-counts.R {input} > {output}"
 
 # Verify identity with verifyBamID ---------------------------------------------
 
