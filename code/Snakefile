@@ -188,6 +188,13 @@ rule normalize_counts:
     output: dir_data + "counts-normalized.txt"
     shell: "Rscript normalize-counts.R {input} > {output}"
 
+# Map eQTL with GEMMA ----------------------------------------------------------
+
+rule get_tss:
+    input: dir_data + "counts-clean.txt"
+    output: dir_data + "tss.bed"
+    shell: "Rscript get-tss.R mar2015.archive.ensembl.org {input} > {output}"
+
 # Verify identity with verifyBamID ---------------------------------------------
 
 # Convert exons in SAF format to BED format. Duplicate exons are maintained.
