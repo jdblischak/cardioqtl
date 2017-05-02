@@ -195,6 +195,12 @@ rule get_tss:
     output: dir_data + "tss.bed"
     shell: "Rscript get-tss.R mar2015.archive.ensembl.org {input} > {output}"
 
+rule subset_relatedness:
+    input: relat = dir_data + "relatedness-matrix-all.txt",
+           exp = dir_data + "counts-clean.txt"
+    output: dir_data + "relatedness-matrix-sub.txt"
+    shell: "Rscript subset-relatedness.R {input.exp} {input.relat} > {output}"
+
 # Verify identity with verifyBamID ---------------------------------------------
 
 # Convert exons in SAF format to BED format. Duplicate exons are maintained.
