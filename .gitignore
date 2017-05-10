@@ -1,6 +1,7 @@
 data/
 code/.snakemake/
 code/log/
+code/output/
 slurm*
 .Rproj.user
 .Rhistory

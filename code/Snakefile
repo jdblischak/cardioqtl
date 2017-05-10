@@ -21,6 +21,8 @@ dir_counts = scratch + "cardioqtl-counts/"
 dir_vcf = dir_data + "vcf/"
 dir_id = dir_data + "id/"
 dir_log = "log/"
+dir_plink = dir_data + "plink/"
+dir_gemma = dir_data + "gemma/"
 
 f_transcripts_fa =  scratch + "transcriptome-ensembl-GRCh38-rel79.fa.gz"
 f_transcripts_idx =  scratch + "transcriptome-ensembl-GRCh38-rel79.idx"
@@ -39,6 +41,8 @@ ensembl_archive = "mar2015.archive.ensembl.org"
 ensembl_rel = "rel79"
 
 chromosomes = [str(x) for x in range(1, 23)] + ["X", "Y", "M"]
+
+window = 1000000
 
 # Input samples ----------------------------------------------------------------
 
@@ -177,7 +181,6 @@ rule combine_featurecounts:
     output: dir_data + "counts-subread.txt"
     shell: "Rscript combine-featurecounts.R {input} > {output}"
 
-
 rule clean_counts:
     input: dir_data + "counts-subread.txt"
     output: dir_data + "counts-clean.txt"
@@ -188,18 +191,113 @@ rule normalize_counts:
     output: dir_data + "counts-normalized.txt"
     shell: "Rscript normalize-counts.R {input} > {output}"
 
-# Map eQTL with GEMMA ----------------------------------------------------------
+# Map eQTLs with GEMMA ---------------------------------------------------------
 
 rule get_tss:
     input: dir_data + "counts-clean.txt"
     output: dir_data + "tss.bed"
     shell: "Rscript get-tss.R mar2015.archive.ensembl.org {input} > {output}"
 
+rule get_tss_gene:
+    input: dir_data + "tss.bed"
+    output: dir_data + "tss-ENSG00000001036.bed"
+    shell: "grep ENSG00000001036 {input} > {output}"
+
 rule subset_relatedness:
     input: relat = dir_data + "relatedness-matrix-all.txt",
            exp = dir_data + "counts-clean.txt"
     output: dir_data + "relatedness-matrix-sub.txt"
     shell: "Rscript subset-relatedness.R {input.exp} {input.relat} > {output}"
+
+# https://www.cog-genomics.org/plink/1.9/input#vcf
+# https://www.cog-genomics.org/plink/1.9/input#bed
+rule convert_to_binary_plink:
+    input: dir_vcf + "dox-hg38-chr6.vcf.gz"
+    output: bed = dir_plink + "chr6.bed",
+            bim = dir_plink + "chr6.bim",
+            fam = dir_plink + "chr6.fam"
+    params: out = dir_plink + "chr6"
+    shell: "plink2 --vcf {input} \
+           --double-id \
+           --vcf-half-call missing \
+           --biallelic-only \
+           --out {params.out}"
+
+rule create_filter_file_for_plink:
+    input: exp = dir_data + "counts-clean.txt"
+    output: filter = dir_plink + "filter-individuals.txt"
+    shell: """
+           head -n 1 {input.exp} | tr '\\t' '\\n' > /tmp/tmp-filter.txt
+           paste /tmp/tmp-filter.txt /tmp/tmp-filter.txt > {output.filter}
+           rm /tmp/tmp-filter.txt
+           """
+
+rule prepare_plink:
+    input: bed = dir_plink + "chr6.bed",
+           bim = dir_plink + "chr6.bim",
+           fam = dir_plink + "chr6.fam",
+           filter = dir_plink + "filter-individuals.txt"
+    output: bed = dir_plink + "chr6-ready.bed",
+            bim = dir_plink + "chr6-ready.bim",
+            fam = dir_plink + "chr6-ready.fam"
+    params: prefix = dir_plink + "chr6",
+            out = dir_plink + "chr6-ready"
+    shell: "plink2 --bfile {params.prefix} --make-bed \
+            --keep {input.filter} \
+            --indiv-sort natural \
+            --out {params.out}"
+
+# Format is:
+# Column 1/2 = IID/FID
+# Column 3 = Phenotype (i.e. gene expression levels)
+rule pheno_file:
+    input: dir_data + "counts-normalized.txt"
+    output: dir_plink + "ENSG00000001036.pheno"
+    params: gene = "ENSG00000001036"
+    shell: """
+           paste \
+           <(head -n 1 {input} | tr '\\t' '\\n') \
+           <(head -n 1 {input} | tr '\\t' '\\n') \
+           <(grep {params.gene} {input} | tr '\\t' '\\n' | sed -e '1d') \
+           > {output}
+           """
+
+rule plink_per_gene:
+    input: bed = dir_plink + "chr6-ready.bed",
+           bim = dir_plink + "chr6-ready.bim",
+           fam = dir_plink + "chr6-ready.fam",
+           tss = dir_data + "tss-ENSG00000001036.bed",
+           pheno = dir_plink + "ENSG00000001036.pheno"
+    output: bed = dir_plink + "ENSG00000001036.bed",
+            bim = dir_plink + "ENSG00000001036.bim",
+            fam = dir_plink + "ENSG00000001036.fam"
+    params: prefix = dir_plink + "chr6-ready",
+            out = dir_plink + "ENSG00000001036"
+    shell: "plink2 --bfile {params.prefix} --make-bed \
+           --pheno {input.pheno} \
+           --chr `cut -f1 {input.tss}` \
+           --from-bp `awk '{{print $3 - {window}}}' {input.tss}` \
+           --to-bp  `awk '{{print $3 + {window}}}' {input.tss}` \
+           --out {params.out}"
+
+rule run_gemma:
+    input: bed = dir_plink + "ENSG00000001036.bed",
+           bim = dir_plink + "ENSG00000001036.bim",
+           fam = dir_plink + "ENSG00000001036.fam",
+           relat = dir_data + "relatedness-matrix-sub.txt"
+    output: assoc = dir_gemma + "ENSG00000001036.assoc.txt",
+            log = dir_gemma + "ENSG00000001036.log.txt"
+    params: pre_plink = dir_plink + "ENSG00000001036",
+            pre_gemma = "ENSG00000001036",
+            outdir = dir_gemma
+    shell: """
+           gemma -bfile {params.pre_plink} \
+           -k {input.relat} -km 2 \
+           -lmm 2 \
+           -o {params.pre_gemma}
+
+           mv output/{params.pre_gemma}* {params.outdir}
+           """
 
 # Verify identity with verifyBamID ---------------------------------------------
 
