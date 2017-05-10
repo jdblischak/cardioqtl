@@ -38,7 +38,7 @@ args <- commandArgs(trailingOnly = TRUE)
 stopifnot(length(args) == 1, file.exists(args))
 input <- args
 # For testing:
-input <- "../data/counts-clean.txt"
+# input <- "../data/counts-clean.txt"
 raw <- read.delim(input, check.names = FALSE)
 
 # Normalize within each sample (column) ----------------------------------------

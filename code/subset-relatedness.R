@@ -2,12 +2,6 @@
 
 # Subset the individuals in the relatedness matrix.
 #
-# 1. Remove invalid samples:
-#      - Too few reads: 26302, 110232
-#      - Sample swap: 160001
-# 2. Remove genes with zero counts
-# 2. Remove lowly expressed genes. Keep genes with median log2 cpm > 0
-#
 # Usage: Rscript subset-relatedness.R exp-mat relatedness-all > relatedness-sub
 #
 # exp-mat - gene expression matrix. Extracts samples from header row
@@ -21,8 +15,9 @@ args <- commandArgs(trailingOnly = TRUE)
 stopifnot(length(args) == 2, file.exists(args))
 exp_file <- args[1]
 relat_file <- args[2]
-exp_file <- "../data/counts-clean.txt"
-relat_file <- "../data/relatedness-matrix-all.txt"
+# For testing:
+# exp_file <- "../data/counts-clean.txt"
+# relat_file <- "../data/relatedness-matrix-all.txt"
 exp <- read.delim(exp_file, check.names = FALSE)
 inds <- colnames(exp)
 relat <- read.delim(relat_file, check.names = FALSE, stringsAsFactors = FALSE)
