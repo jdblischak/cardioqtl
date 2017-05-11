@@ -209,19 +209,13 @@ rule subset_relatedness:
     output: dir_data + "relatedness-matrix-sub.txt"
     shell: "Rscript subset-relatedness.R {input.exp} {input.relat} > {output}"
 
-# https://www.cog-genomics.org/plink/1.9/input#vcf
-# https://www.cog-genomics.org/plink/1.9/input#bed
-rule convert_to_binary_plink:
-    input: dir_vcf + "dox-hg38-chr6.vcf.gz"
-    output: bed = dir_plink + "chr6.bed",
-            bim = dir_plink + "chr6.bim",
-            fam = dir_plink + "chr6.fam"
-    params: out = dir_plink + "chr6"
-    shell: "plink2 --vcf {input} \
-           --double-id \
-           --vcf-half-call missing \
-           --biallelic-only \
-           --out {params.out}"
+# Merge VCF files (Plink only accepts one as input)
+rule merge_vcf:
+    input: vcf = expand(dir_vcf  + "dox-hg38-chr{CHR}.vcf.gz", CHR = chromosomes[:-3])
+    output: vcf = dir_vcf + "dox-hg38.vcf.gz"
+    shell: "cat <(zcat {input.vcf[0]} | grep CHROM) \
+                <(zcat {input.vcf} | grep -v '#') | \
+            gzip -c > {output.vcf}"
 
 rule create_filter_file_for_plink:
     input: exp = dir_data + "counts-clean.txt"
@@ -232,20 +226,23 @@ rule create_filter_file_for_plink:
            rm /tmp/tmp-filter.txt
            """
 
-rule prepare_plink:
-    input: bed = dir_plink + "chr6.bed",
-           bim = dir_plink + "chr6.bim",
-           fam = dir_plink + "chr6.fam",
+# https://www.cog-genomics.org/plink/1.9/input#vcf
+# https://www.cog-genomics.org/plink/1.9/input#bed
+rule convert_to_binary_plink:
+    input: vcf = dir_vcf + "dox-hg38.vcf.gz",
            filter = dir_plink + "filter-individuals.txt"
-    output: bed = dir_plink + "chr6-ready.bed",
-            bim = dir_plink + "chr6-ready.bim",
-            fam = dir_plink + "chr6-ready.fam"
-    params: prefix = dir_plink + "chr6",
-            out = dir_plink + "chr6-ready"
-    shell: "plink2 --bfile {params.prefix} --make-bed \
-            --keep {input.filter} \
-            --indiv-sort natural \
-            --out {params.out}"
+    output: bed = dir_plink + "dox-hg38.bed",
+            bim = dir_plink + "dox-hg38.bim",
+            fam = dir_plink + "dox-hg38.fam"
+    params: out = dir_plink + "dox-hg38"
+    shell: "plink2 --vcf {input.vcf} \
+           --double-id \
+           --vcf-half-call missing \
+           --biallelic-only \
+           --make-bed \
+           --keep {input.filter} \
+           --indiv-sort natural \
+           --out {params.out}"
 
 # Format is:
 # Column 1/2 = IID/FID
@@ -263,15 +260,15 @@ rule pheno_file:
            """
 
 rule plink_per_gene:
-    input: bed = dir_plink + "chr6-ready.bed",
-           bim = dir_plink + "chr6-ready.bim",
-           fam = dir_plink + "chr6-ready.fam",
+    input: bed = dir_plink + "dox-hg38.bed",
+           bim = dir_plink + "dox-hg38.bim",
+           fam = dir_plink + "dox-hg38.fam",
            tss = dir_data + "tss-ENSG00000001036.bed",
            pheno = dir_plink + "ENSG00000001036.pheno"
     output: bed = dir_plink + "ENSG00000001036.bed",
             bim = dir_plink + "ENSG00000001036.bim",
             fam = dir_plink + "ENSG00000001036.fam"
-    params: prefix = dir_plink + "chr6-ready",
+    params: prefix = dir_plink + "dox-hg38",
             out = dir_plink + "ENSG00000001036"
     shell: "plink2 --bfile {params.prefix} --make-bed \
            --pheno {input.pheno} \
