@@ -21,6 +21,8 @@ dir_counts = scratch + "cardioqtl-counts/"
 dir_vcf = dir_data + "vcf/"
 dir_id = dir_data + "id/"
 dir_log = "log/"
+dir_tss = dir_data + "tss/"
+dir_pheno = dir_data + "pheno/"
 dir_plink = dir_data + "plink/"
 dir_gemma = dir_data + "gemma/"
 
@@ -68,6 +70,9 @@ def merge_fastq(wc):
     return files
 
 # Targets ----------------------------------------------------------------------
+
+rule gemma:
+    input: dynamic(dir_gemma + "{gene}.assoc.txt")
 
 rule quantify_expression:
     input:  dir_data + "gene-exp-all.txt"
@@ -195,13 +200,31 @@ rule normalize_counts:
 
 rule get_tss:
     input: dir_data + "counts-clean.txt"
-    output: dir_data + "tss.bed"
+    output: dir_tss + "tss.bed"
     shell: "Rscript get-tss.R mar2015.archive.ensembl.org {input} > {output}"
 
 rule get_tss_gene:
-    input: dir_data + "tss.bed"
-    output: dir_data + "tss-ENSG00000001036.bed"
-    shell: "grep ENSG00000001036 {input} > {output}"
+    input: dir_tss + "tss.bed"
+    output: dynamic(dir_tss + "tss-{gene}.bed")
+    params: outdir = dir_tss
+    run:
+        i = 0
+        bed = open(input[0], "r")
+        for line in bed:
+            cols = line.strip().split("\t")
+            chrom = cols[0]
+            if chrom in ["chrX", "chrY", "chrM"]:
+                continue
+            gene = cols[3]
+            assert gene[:4] == "ENSG", "Proper gene name"
+            fname = params.outdir + "tss-" + gene + ".bed"
+            handle = open(fname, "w")
+            handle.write(line)
+            handle.close()
+            i += 1
+            if i == 10:
+                break
+        bed.close()
 
 rule subset_relatedness:
     input: relat = dir_data + "relatedness-matrix-all.txt",
@@ -248,14 +271,15 @@ rule convert_to_binary_plink:
 # Column 1/2 = IID/FID
 # Column 3 = Phenotype (i.e. gene expression levels)
 rule pheno_file:
-    input: dir_data + "counts-normalized.txt"
-    output: dir_plink + "ENSG00000001036.pheno"
-    params: gene = "ENSG00000001036"
+    input: tss = dir_tss + "tss-{gene}.bed",
+           counts = dir_data + "counts-normalized.txt"
+    output: dir_pheno + "{gene}.pheno"
+    params: gene = "{gene}"
     shell: """
            paste \
-           <(head -n 1 {input} | tr '\\t' '\\n') \
-           <(head -n 1 {input} | tr '\\t' '\\n') \
-           <(grep {params.gene} {input} | tr '\\t' '\\n' | sed -e '1d') \
+           <(head -n 1 {input.counts} | tr '\\t' '\\n') \
+           <(head -n 1 {input.counts} | tr '\\t' '\\n') \
+           <(grep {params.gene} {input.counts} | tr '\\t' '\\n' | sed -e '1d') \
            > {output}
            """
 
@@ -263,13 +287,13 @@ rule plink_per_gene:
     input: bed = dir_plink + "dox-hg38.bed",
            bim = dir_plink + "dox-hg38.bim",
            fam = dir_plink + "dox-hg38.fam",
-           tss = dir_data + "tss-ENSG00000001036.bed",
-           pheno = dir_plink + "ENSG00000001036.pheno"
-    output: bed = dir_plink + "ENSG00000001036.bed",
-            bim = dir_plink + "ENSG00000001036.bim",
-            fam = dir_plink + "ENSG00000001036.fam"
+           tss = dir_tss + "tss-{gene}.bed",
+           pheno = dir_pheno + "{gene}.pheno"
+    output: bed = dir_plink + "{gene}.bed",
+            bim = dir_plink + "{gene}.bim",
+            fam = dir_plink + "{gene}.fam"
     params: prefix = dir_plink + "dox-hg38",
-            out = dir_plink + "ENSG00000001036"
+            out = dir_plink + "{gene}"
     shell: "plink2 --bfile {params.prefix} --make-bed \
            --pheno {input.pheno} \
            --chr `cut -f1 {input.tss}` \
@@ -278,14 +302,14 @@ rule plink_per_gene:
            --out {params.out}"
 
 rule run_gemma:
-    input: bed = dir_plink + "ENSG00000001036.bed",
-           bim = dir_plink + "ENSG00000001036.bim",
-           fam = dir_plink + "ENSG00000001036.fam",
+    input: bed = dir_plink + "{gene}.bed",
+           bim = dir_plink + "{gene}.bim",
+           fam = dir_plink + "{gene}.fam",
            relat = dir_data + "relatedness-matrix-sub.txt"
-    output: assoc = dir_gemma + "ENSG00000001036.assoc.txt",
-            log = dir_gemma + "ENSG00000001036.log.txt"
-    params: pre_plink = dir_plink + "ENSG00000001036",
-            pre_gemma = "ENSG00000001036",
+    output: assoc = dir_gemma + "{gene}.assoc.txt",
+            log = dir_gemma + "{gene}.log.txt"
+    params: pre_plink = dir_plink + "{gene}",
+            pre_gemma = "{gene}",
             outdir = dir_gemma
     shell: """
            gemma -bfile {params.pre_plink} \
