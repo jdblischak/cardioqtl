@@ -1,5 +1,7 @@
 #!/bin/bash
 
+source activate cardioqtl
+
 snakemake \
     -kp \
     --ri \

@@ -18,18 +18,25 @@ from snakemake.utils import R
 
 configfile: "config.yaml"
 
-# Paths must end with forward slash
+# Specify Ensembl release for genome sequence and annotation
+ensembl_archive = config["ensembl_archive"]
+ensembl_rel = config["ensembl_rel"]
+ensembl_ftp = "ftp://ftp.ensembl.org/pub/release-" + \
+              str(ensembl_rel) + \
+              "/fasta/homo_sapiens/dna/"
+ensembl_exons = "exons-ensembl-release-" + str(ensembl_rel) + ".saf"
+
+# Paths to data (must end with forward slash)
 dir_proj = config["dir_proj"]
 dir_data = dir_proj + "data/"
 dir_fq = dir_data + "fastq/"
 scratch = config["scratch"]
-dir_genome = scratch + "hg38/"
+dir_genome = scratch + "genome-ensembl-release-" + str(ensembl_rel) + "/"
 dir_fq_tmp = scratch + "cardioqtl-fastq/"
 dir_bam = scratch + "cardioqtl-bam/"
 dir_counts = scratch + "cardioqtl-counts/"
 dir_vcf = dir_data + "vcf/"
 dir_id = dir_data + "id/"
-dir_log = config["dir_log"]
 dir_tss = dir_data + "tss/"
 dir_pheno = dir_data + "pheno/"
 dir_plink = dir_data + "plink/"
@@ -38,12 +45,18 @@ dir_gemma = dir_data + "gemma/"
 assert os.path.exists(dir_proj), "Project directory exists"
 assert os.path.exists(scratch), "Scratch directory exists"
 
-# Specify Ensembl release for genome sequence and annotation
-ensembl_archive = config["ensembl_archive"]
-ensembl_rel = config["ensembl_rel"]
+# Directory to send log files. Needs to be created manually since it
+# is not a file created by a Snakemake rule.
+dir_log = config["dir_log"]
+if not os.path.isdir(dir_log):
+    os.mkdir(dir_log)
 
 # Specify chromosomes
-chromosomes = [str(x) for x in range(1, 23)] + ["X", "Y", "M"]
+#
+# For quantifying gene expression
+chr_genes = config["chr_genes"]
+# For mapping eQTLs
+chr_snps = config["chr_snps"]
 
 # Specify cis-window around TSS for testing eQTLs (TSS +/- window)
 window = config["window"]
@@ -85,31 +98,35 @@ rule counts_for_gemma:
 rule run_featureCounts:
     input: expand(dir_counts + "{sample}.genecounts.txt", sample = samples)
 
+rule prepare_featureCounts:
+    input: dir_genome + ensembl_exons
+
 rule run_verifyBamID:
     input: dir_data + "verify.txt"
 
 rule run_subjunc:
-    input: expand(dir_bam + "{sample}.bam", sample = samples)
+    input: expand(dir_bam + "{sample}-sort.bam.bai", sample = samples)
 
 rule prepare_subjunc:
-    input: dir_genome + "hg38.reads"
+    input: dir_genome + "GRCh38.reads"
 
 # Quanitify expression with Subjunc/featureCounts ------------------------------
 
 rule download_genome:
-    output: dir_genome + "chr{chr}.fa.gz"
+    output: dir_genome + "Homo_sapiens.GRCh38.dna_sm.chromosome.{chr}.fa.gz"
     params: chr = "{chr}"
-    shell: "wget -O {output} http://hgdownload.cse.ucsc.edu/goldenPath/hg38/chromosomes/chr{params.chr}.fa.gz"
+    shell: "wget -O {output} {ensembl_ftp}Homo_sapiens.GRCh38.dna_sm.chromosome.{params.chr}.fa.gz"
 
 rule unzip_chromosome_fasta:
-    input: dir_genome + "chr{chr}.fa.gz"
-    output: temp(dir_genome + "chr{chr}.fa")
+    input: dir_genome + "Homo_sapiens.GRCh38.dna_sm.chromosome.{chr}.fa.gz"
+    output: temp(dir_genome + "Homo_sapiens.GRCh38.dna_sm.chromosome.{chr}.fa")
     shell: "zcat {input} > {output}"
 
 rule subread_index:
-    input: expand(dir_genome + "chr{chr}.fa", chr = chromosomes)
-    output: dir_genome + "hg38.reads"
-    params: prefix = dir_genome + "hg38"
+    input: expand(dir_genome + "Homo_sapiens.GRCh38.dna_sm.chromosome.{chr}.fa", \
+                  chr = chr_genes)
+    output: dir_genome + "GRCh38.reads"
+    params: prefix = dir_genome + "GRCh38"
     shell: "subread-buildindex -o {params.prefix} {input}"
 
 rule combine_fastq:
@@ -119,9 +136,9 @@ rule combine_fastq:
 
 rule subjunc:
     input: read = dir_fq_tmp + "{sample}.fastq",
-           index = dir_genome + "hg38.reads"
+           index = dir_genome + "GRCh38.reads"
     output: temp(dir_bam + "{sample}.bam")
-    params: prefix = dir_genome + "hg38"
+    params: prefix = dir_genome + "GRCh38"
     threads: 8
     shell: "subjunc -i {params.prefix} -r {input.read} -u -T {threads} > {output}"
 
@@ -136,12 +153,12 @@ rule index_bam:
     shell: "samtools index {input}"
 
 rule create_exons_saf:
-    output: dir_genome + "exons.saf"
+    output: dir_genome + ensembl_exons
     shell: "Rscript scripts/create-exons.R {ensembl_archive} > {output}"
 
 rule feauturecounts:
     input: bam = dir_bam + "{sample}-sort.bam",
-           exons = dir_genome + "exons.saf"
+           exons = dir_genome + ensembl_exons
     output: dir_counts + "{sample}.genecounts.txt"
     threads: 8
     shell: "featureCounts -a {input.exons} -F SAF -T {threads} -o {output} {input.bam}"
@@ -207,7 +224,7 @@ rule subset_relatedness:
 
 # Merge VCF files (Plink only accepts one as input)
 rule merge_vcf:
-    input: vcf = expand(dir_vcf  + "dox-hg38-chr{CHR}.vcf.gz", CHR = chromosomes[:-3])
+    input: vcf = expand(dir_vcf  + "dox-hg38-chr{CHR}.vcf.gz", CHR = chr_snps)
     output: vcf = dir_vcf + "dox-hg38.vcf.gz"
     shell: "cat <(zcat {input.vcf[0]} | grep CHROM) \
                 <(zcat {input.vcf} | grep -v '#') | \
@@ -309,7 +326,7 @@ rule combine_gemma:
 
 # Convert exons in SAF format to BED format. Duplicate exons are maintained.
 rule convert_to_bed:
-    input: saf = dir_genome + "exons.saf"
+    input: saf = dir_genome + ensembl_exons
     output: bed = dir_genome + "exons.bed"
     run:
         saf = open(input.saf, "r")
@@ -358,7 +375,7 @@ rule select_exonic_snps:
 
 # Combine exonic SNPs into one file
 rule combine_snps:
-    input: vcf = expand(dir_vcf  + "dox-hg38-chr{CHR}-exons.vcf", CHR = chromosomes[:-3])
+    input: vcf = expand(dir_vcf  + "dox-hg38-chr{CHR}-exons.vcf", CHR = chr_snps[:-3])
     output: vcf = dir_vcf + "dox-hg38-exons.vcf"
     shell: "cat <(grep CHROM {input.vcf[0]}) <(cat {input.vcf} | grep -v '#') > {output.vcf}"
 

@@ -5,6 +5,7 @@
 # Paths must end with forward slash
 dir_proj: /project2/gilad/jdblischak/cardioqtl/
 scratch: /scratch/midway2/jdblischak/
+# Make sure to also update path for log files in cluster.json
 dir_log: log/
 
 # Specify Ensembl release for genome sequence and annotation
@@ -14,3 +15,15 @@ ensembl_rel: 88
 
 # Specify cis-window around TSS for testing eQTLs (TSS +/- window)
 window: 1000000
+
+# Specify chromosomes
+#
+# For quantifying gene expression
+chr_genes: ["1", "2", "3", "4", "5", "6", "7", "8", "9",
+            "10", "11", "12", "13", "14", "15", "16",
+            "17", "18", "19", "20", "21", "22",
+            "X", "Y", "MT"]
+# For mapping eQTLs
+chr_snps: ["1", "2", "3", "4", "5", "6", "7", "8", "9",
+            "10", "11", "12", "13", "14", "15", "16",
+            "17", "18", "19", "20", "21", "22"]
