@@ -12,7 +12,6 @@ from snakemake.utils import R
 dir_proj = "/project2/gilad/jdblischak/cardioqtl/"
 dir_data = dir_proj + "data/"
 dir_fq = dir_data + "fastq/"
-dir_kal = dir_data + "kallisto/"
 scratch = "/scratch/midway2/jdblischak/"
 dir_genome = scratch + "hg38/"
 dir_fq_tmp = scratch + "cardioqtl-fastq/"
@@ -26,13 +25,10 @@ dir_pheno = dir_data + "pheno/"
 dir_plink = dir_data + "plink/"
 dir_gemma = dir_data + "gemma/"
 
-f_transcripts_fa =  scratch + "transcriptome-ensembl-GRCh38-rel79.fa.gz"
-f_transcripts_idx =  scratch + "transcriptome-ensembl-GRCh38-rel79.idx"
-
 assert os.path.exists(dir_proj), "Project directory exists"
 assert os.path.exists(scratch), "Scratch directory exists"
 
-for d in [dir_data, dir_fq, dir_kal, dir_genome,
+for d in [dir_data, dir_fq, dir_genome,
           dir_fq_tmp, dir_bam, dir_counts, dir_vcf,
           dir_id, dir_log]:
     if not os.path.isdir(d):
@@ -77,15 +73,6 @@ rule all:
 rule gemma:
     input: dynamic(dir_gemma + "{gene}.assoc.txt")
 
-rule quantify_expression:
-    input:  dir_data + "gene-exp-all.txt"
-
-rule run_kallisto:
-    input: expand(dir_kal + "{sample}/abundance.tsv", sample = samples)
-
-rule prepare_kallisto:
-    input: f_transcripts_idx
-
 rule run_verifyBamID:
     input: dir_data + "verify.txt"
 
@@ -100,37 +87,6 @@ rule run_subjunc:
 
 rule prepare_subjunc:
     input: dir_genome + "hg38.reads"
-
-# Quanitfy expression with kallisto --------------------------------------------
-
-# This is release 79 from 2015-03. Should eventually update to release
-# 86 from 2016-10.
-rule download_transcriptome:
-    output: f_transcripts_fa
-    shell: "wget -O {output} http://bio.math.berkeley.edu/kallisto/transcriptomes/Homo_sapiens.GRCh38.rel79.cdna.all.fa.gz"
-
-rule kallisto_index:
-    input:  f_transcripts_fa,
-    output: f_transcripts_idx
-    shell: "kallisto index -i {output} {input}"
-
-rule kallisto_quant:
-    input: read1 = merge_fastq,
-           index = f_transcripts_idx
-    output: dir_kal + "{sample}/abundance.tsv"
-    params: outdir = dir_kal + "{sample}"
-    threads: 8
-    shell: "kallisto quant -i {input.index} -o {params.outdir} --single -l 200 -s 20 -t {threads} {input.read1}"
-
-rule download_ensembl_info:
-    output: dir_data + "ensembl-" + ensembl_rel + ".txt"
-    shell: "Rscript download-ensembl-info.R {ensembl_archive} > {output}"
-
-rule create_gene_exp_matrix:
-    input: expand(dir_kal + "{sample}/abundance.tsv", sample = samples),
-           ensembl = dir_data + "ensembl-" + ensembl_rel + ".txt"
-    output: dir_data + "gene-exp-all.txt"
-    shell: "Rscript create-gene-exp-matrix.R {input.ensembl} {dir_kal} > {output}"
 
 # Quanitify expression with Subjunc/featureCounts ------------------------------
 
