@@ -217,9 +217,17 @@ rule get_tss_gene:
                 continue
             gene = cols[3]
             assert gene[:4] == "ENSG", "Proper gene name"
+            start = int(cols[1]) - window
+            if start < 0:
+                start = str(0)
+            else:
+                start = str(start)
+            end = int(cols[2]) + window
+            end = str(end)
             fname = params.outdir + "tss-" + gene + ".bed"
             handle = open(fname, "w")
-            handle.write(line)
+            cols_new = [cols[0]] + [start, end] + cols[3:]
+            handle.write("\t".join(cols_new) + "\n")
             handle.close()
             i += 1
             if i == 10:
@@ -297,8 +305,8 @@ rule plink_per_gene:
     shell: "plink2 --bfile {params.prefix} --make-bed \
            --pheno {input.pheno} \
            --chr `cut -f1 {input.tss}` \
-           --from-bp `awk '{{print $3 - {window}}}' {input.tss}` \
-           --to-bp  `awk '{{print $3 + {window}}}' {input.tss}` \
+           --from-bp `cut -f2 {input.tss}` \
+           --to-bp  `cut -f3 {input.tss}` \
            --out {params.out}"
 
 rule run_gemma:
