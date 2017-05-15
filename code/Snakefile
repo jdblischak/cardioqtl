@@ -71,6 +71,9 @@ def merge_fastq(wc):
 
 # Targets ----------------------------------------------------------------------
 
+rule all:
+    input: dir_gemma + "gemma-top.txt"
+
 rule gemma:
     input: dynamic(dir_gemma + "{gene}.assoc.txt")
 
@@ -327,6 +330,18 @@ rule run_gemma:
 
            mv output/{params.pre_gemma}* {params.outdir}
            """
+
+rule parse_gemma:
+    input: assoc = dir_gemma + "{gene}.assoc.txt"
+    output: dir_gemma + "{gene}.top.txt"
+    params: gene = "{gene}"
+    shell: "Rscript parse-gemma.R {params.gene} {input} > {output}"
+
+rule combine_gemma:
+    input: top = dynamic(dir_gemma + "{gene}.top.txt")
+    output: dir_gemma + "gemma-top.txt"
+    shell: "cat <(head -n 1 {input.top[0]}) \
+                <(cat {input} | grep -v mle) > {output}"
 
 # Verify identity with verifyBamID ---------------------------------------------
 
