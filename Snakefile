@@ -5,7 +5,8 @@
 # To configure the paths to data files and other settings, edit
 # config.yaml.
 #
-# To configure job submission setting for your cluster, edit config-rcc.json.
+# To configure job submission settings for your cluster, edit
+# cluster.json and submit-snakemake.sh.
 #
 # To run on RCC Midway2 use `bash submit-snakemake.sh`
 
@@ -15,7 +16,7 @@ from snakemake.utils import R
 
 # Configuration ----------------------------------------------------------------
 
-configfile: "../config.yaml"
+configfile: "config.yaml"
 
 # Paths must end with forward slash
 dir_proj = config["dir_proj"]
@@ -136,7 +137,7 @@ rule index_bam:
 
 rule create_exons_saf:
     output: dir_genome + "exons.saf"
-    shell: "Rscript create-exons.R {ensembl_archive} >  {output}"
+    shell: "Rscript scripts/create-exons.R {ensembl_archive} > {output}"
 
 rule feauturecounts:
     input: bam = dir_bam + "{sample}-sort.bam",
@@ -148,24 +149,24 @@ rule feauturecounts:
 rule combine_featurecounts:
     input: expand(dir_counts + "{sample}.genecounts.txt", sample = samples)
     output: dir_data + "counts-subread.txt"
-    shell: "Rscript combine-featurecounts.R {input} > {output}"
+    shell: "Rscript scripts/combine-featurecounts.R {input} > {output}"
 
 rule clean_counts:
     input: dir_data + "counts-subread.txt"
     output: dir_data + "counts-clean.txt"
-    shell: "Rscript clean-counts.R {input} > {output}"
+    shell: "Rscript scripts/clean-counts.R {input} > {output}"
 
 rule normalize_counts:
     input: dir_data + "counts-clean.txt"
     output: dir_data + "counts-normalized.txt"
-    shell: "Rscript normalize-counts.R {input} > {output}"
+    shell: "Rscript scripts/normalize-counts.R {input} > {output}"
 
 # Map eQTLs with GEMMA ---------------------------------------------------------
 
 rule get_tss:
     input: dir_data + "counts-clean.txt"
     output: dir_tss + "tss.bed"
-    shell: "Rscript get-tss.R {ensembl_archive} {input} > {output}"
+    shell: "Rscript scripts/get-tss.R {ensembl_archive} {input} > {output}"
 
 rule get_tss_gene:
     input: dir_tss + "tss.bed"
@@ -202,7 +203,7 @@ rule subset_relatedness:
     input: relat = dir_data + "relatedness-matrix-all.txt",
            exp = dir_data + "counts-clean.txt"
     output: dir_data + "relatedness-matrix-sub.txt"
-    shell: "Rscript subset-relatedness.R {input.exp} {input.relat} > {output}"
+    shell: "Rscript scripts/subset-relatedness.R {input.exp} {input.relat} > {output}"
 
 # Merge VCF files (Plink only accepts one as input)
 rule merge_vcf:
@@ -296,7 +297,7 @@ rule parse_gemma:
     input: assoc = dir_gemma + "{gene}.assoc.txt"
     output: dir_gemma + "{gene}.top.txt"
     params: gene = "{gene}"
-    shell: "Rscript parse-gemma.R {params.gene} {input} > {output}"
+    shell: "Rscript scripts/parse-gemma.R {params.gene} {input} > {output}"
 
 rule combine_gemma:
     input: top = dynamic(dir_gemma + "{gene}.top.txt")

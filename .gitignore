@@ -1,7 +1,7 @@
 data/
-code/.snakemake/
-code/log/
-code/output/
+.snakemake/
+log/
+output/
 slurm*
 .Rproj.user
 .Rhistory
