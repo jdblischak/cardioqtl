@@ -1,0 +1,16 @@
+# Snakemake configuration file
+
+# Specify paths to data files
+#
+# Paths must end with forward slash
+dir_proj: /project2/gilad/jdblischak/cardioqtl/
+scratch: /scratch/midway2/jdblischak/
+dir_log: log/
+
+# Specify Ensembl release for genome sequence and annotation
+# http://mar2017.archive.ensembl.org/index.html
+ensembl_archive: mar2017.archive.ensembl.org
+ensembl_rel: 88
+
+# Specify cis-window around TSS for testing eQTLs (TSS +/- window)
+window: 1000000
