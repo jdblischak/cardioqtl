@@ -3,11 +3,11 @@
 # Obtain the most upstream TSS per gene.
 #
 # Usage:
-#   Rscript get-tss.R <archive> input > output.bed
+#   Rscript get-tss.R <archive> input > output.txt
 #
-# archive - URL of Ensembl archive, e.g. mar2015.archive.ensembl.org
+# archive - URL of Ensembl archive, e.g. mar2017.archive.ensembl.org
 # input - gene expression matrix. Only rownames are used
-# output.bed - BED format with one TSS per gene
+# output.txt - tab-separated file with one TSS per gene
 
 suppressMessages(library("biomaRt"))
 library("stringr")
@@ -18,7 +18,7 @@ stopifnot(length(args) == 2)
 archive <- args[1]
 input <- args[2]
 # For testing:
-# archive <- "mar2015.archive.ensembl.org"
+# archive <- "mar2017.archive.ensembl.org"
 # input <- "../data/counts-clean.txt"
 stopifnot(file.exists(input))
 raw <- read.delim(input, check.names = FALSE)
@@ -76,17 +76,16 @@ tss_per_gene <- tss_all %>%
   ungroup() %>%
   arrange(ensembl_gene_id)
 
-# Convert to BED format --------------------------------------------------------
+# Format -----------------------------------------------------------------------
 
-tss_bed <- tss_per_gene %>%
-  rename(chr = chromosome_name) %>%
-  mutate(chr = ifelse(chr == "MT", "M", chr),
-         chr = paste0("chr", chr),
-         start = tss - 1,
-         end = tss,
-         strand = ifelse(strand == 1, "+", "-")) %>%
-  select(chr, start, end, ensembl_gene_id, strand)
+tss_out <- tss_per_gene %>%
+  rename(gene = ensembl_gene_id,
+         chr = chromosome_name,
+         name = external_gene_name,
+         biotype = gene_biotype) %>%
+  mutate(strand = ifelse(strand == 1, "+", "-")) %>%
+  select(gene, chr, tss, strand, name, biotype)
 
 # Output -----------------------------------------------------------------------
-write.table(tss_bed, "", quote = FALSE, sep = "\t",
+write.table(tss_out, "", quote = FALSE, sep = "\t",
             row.names = FALSE, col.names = FALSE)

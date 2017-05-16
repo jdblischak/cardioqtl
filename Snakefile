@@ -92,6 +92,9 @@ rule all:
 rule gemma:
     input: dynamic(dir_gemma + "{gene}.assoc.txt")
 
+rule prepare_tss:
+    input: dynamic(dir_tss + "tss-{gene}.txt")
+
 rule counts_for_gemma:
     input: dir_data + "counts-normalized.txt"
 
@@ -182,39 +185,40 @@ rule normalize_counts:
 
 rule get_tss:
     input: dir_data + "counts-clean.txt"
-    output: dir_tss + "tss.bed"
+    output: dir_tss + "tss.txt"
     shell: "Rscript scripts/get-tss.R {ensembl_archive} {input} > {output}"
 
 rule get_tss_gene:
-    input: dir_tss + "tss.bed"
-    output: dynamic(dir_tss + "tss-{gene}.bed")
+    input: dir_tss + "tss.txt"
+    output: dynamic(dir_tss + "tss-{gene}.txt")
     params: outdir = dir_tss
     run:
         i = 0
-        bed = open(input[0], "r")
-        for line in bed:
+        f = open(input[0], "r")
+        for line in f:
             cols = line.strip().split("\t")
-            chrom = cols[0]
-            if chrom in ["chrX", "chrY", "chrM"]:
-                continue
-            gene = cols[3]
+            gene = cols[0]
             assert gene[:4] == "ENSG", "Proper gene name"
-            start = int(cols[1]) - window
+            chrom = cols[1]
+            if chrom not in chr_snps:
+                continue
+            tss = int(cols[2])
+            start = tss - window
             if start < 0:
                 start = str(0)
             else:
                 start = str(start)
-            end = int(cols[2]) + window
+            end = tss + window
             end = str(end)
-            fname = params.outdir + "tss-" + gene + ".bed"
+            fname = params.outdir + "tss-" + gene + ".txt"
             handle = open(fname, "w")
-            cols_new = [cols[0]] + [start, end] + cols[3:]
+            cols_new = [gene, chrom, start, end] + cols[3:]
             handle.write("\t".join(cols_new) + "\n")
             handle.close()
             i += 1
-            if i == 10:
+            if i == 15145:
                 break
-        bed.close()
+        f.close()
 
 rule subset_relatedness:
     input: relat = dir_data + "relatedness-matrix-all.txt",
@@ -261,7 +265,7 @@ rule convert_to_binary_plink:
 # Column 1/2 = IID/FID
 # Column 3 = Phenotype (i.e. gene expression levels)
 rule pheno_file:
-    input: tss = dir_tss + "tss-{gene}.bed",
+    input: tss = dir_tss + "tss-{gene}.txt",
            counts = dir_data + "counts-normalized.txt"
     output: dir_pheno + "{gene}.pheno"
     params: gene = "{gene}"
@@ -277,7 +281,7 @@ rule plink_per_gene:
     input: bed = dir_plink + "dox-hg38.bed",
            bim = dir_plink + "dox-hg38.bim",
            fam = dir_plink + "dox-hg38.fam",
-           tss = dir_tss + "tss-{gene}.bed",
+           tss = dir_tss + "tss-{gene}.txt",
            pheno = dir_pheno + "{gene}.pheno"
     output: bed = dir_plink + "{gene}.bed",
             bim = dir_plink + "{gene}.bim",
@@ -286,9 +290,9 @@ rule plink_per_gene:
             out = dir_plink + "{gene}"
     shell: "plink2 --bfile {params.prefix} --make-bed \
            --pheno {input.pheno} \
-           --chr `cut -f1 {input.tss}` \
-           --from-bp `cut -f2 {input.tss}` \
-           --to-bp  `cut -f3 {input.tss}` \
+           --chr `cut -f2 {input.tss}` \
+           --from-bp `cut -f3 {input.tss}` \
+           --to-bp  `cut -f4 {input.tss}` \
            --out {params.out}"
 
 rule run_gemma:
