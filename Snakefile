@@ -25,6 +25,7 @@ ensembl_ftp = "ftp://ftp.ensembl.org/pub/release-" + \
               str(ensembl_rel) + \
               "/fasta/homo_sapiens/dna/"
 ensembl_exons = "exons-ensembl-release-" + str(ensembl_rel) + ".saf"
+ensembl_genome = config["ensembl_genome"]
 
 # Paths to data (must end with forward slash)
 dir_proj = config["dir_proj"]
@@ -98,10 +99,10 @@ rule prepare_tss:
 rule counts_for_gemma:
     input: dir_data + "counts-normalized.txt"
 
-rule run_featureCounts:
+rule run_featurecounts:
     input: expand(dir_counts + "{sample}.genecounts.txt", sample = samples)
 
-rule prepare_featureCounts:
+rule prepare_featurecounts:
     input: dir_genome + ensembl_exons
 
 rule run_verifyBamID:
@@ -111,25 +112,29 @@ rule run_subjunc:
     input: expand(dir_bam + "{sample}-sort.bam.bai", sample = samples)
 
 rule prepare_subjunc:
-    input: dir_genome + "GRCh38.reads"
+    input: dir_genome + ensembl_genome + ".reads"
 
 # Quanitify expression with Subjunc/featureCounts ------------------------------
 
 rule download_genome:
-    output: dir_genome + "Homo_sapiens.GRCh38.dna_sm.chromosome.{chr}.fa.gz"
-    params: chr = "{chr}"
-    shell: "wget -O {output} {ensembl_ftp}Homo_sapiens.GRCh38.dna_sm.chromosome.{params.chr}.fa.gz"
+    output: dir_genome + "Homo_sapiens." + ensembl_genome + \
+            ".dna_sm.chromosome.{chr}.fa.gz"
+    params: chr = "{chr}", build = ensembl_genome
+    shell: "wget -O {output} {ensembl_ftp}Homo_sapiens.{params.build}.dna_sm.chromosome.{params.chr}.fa.gz"
 
 rule unzip_chromosome_fasta:
-    input: dir_genome + "Homo_sapiens.GRCh38.dna_sm.chromosome.{chr}.fa.gz"
-    output: temp(dir_genome + "Homo_sapiens.GRCh38.dna_sm.chromosome.{chr}.fa")
+    input: dir_genome + "Homo_sapiens." + ensembl_genome + \
+           ".dna_sm.chromosome.{chr}.fa.gz"
+    output: temp(dir_genome + "Homo_sapiens." + ensembl_genome + \
+                 ".dna_sm.chromosome.{chr}.fa")
     shell: "zcat {input} > {output}"
 
 rule subread_index:
-    input: expand(dir_genome + "Homo_sapiens.GRCh38.dna_sm.chromosome.{chr}.fa", \
+    input: expand(dir_genome + "Homo_sapiens." + ensembl_genome + \
+                  ".dna_sm.chromosome.{chr}.fa", \
                   chr = chr_genes)
-    output: dir_genome + "GRCh38.reads"
-    params: prefix = dir_genome + "GRCh38"
+    output: dir_genome + ensembl_genome + ".reads"
+    params: prefix = dir_genome + ensembl_genome
     shell: "subread-buildindex -o {params.prefix} {input}"
 
 rule combine_fastq:
@@ -139,9 +144,9 @@ rule combine_fastq:
 
 rule subjunc:
     input: read = dir_fq_tmp + "{sample}.fastq",
-           index = dir_genome + "GRCh38.reads"
+           index = dir_genome + ensembl_genome + ".reads"
     output: temp(dir_bam + "{sample}.bam")
-    params: prefix = dir_genome + "GRCh38"
+    params: prefix = dir_genome + ensembl_genome
     threads: 8
     shell: "subjunc -i {params.prefix} -r {input.read} -u -T {threads} > {output}"
 
@@ -161,6 +166,7 @@ rule create_exons_saf:
 
 rule feauturecounts:
     input: bam = dir_bam + "{sample}-sort.bam",
+           bai = dir_bam + "{sample}-sort.bam.bai",
            exons = dir_genome + ensembl_exons
     output: dir_counts + "{sample}.genecounts.txt"
     threads: 8

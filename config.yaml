@@ -9,9 +9,10 @@ scratch: /scratch/midway2/jdblischak/
 dir_log: log/
 
 # Specify Ensembl release for genome sequence and annotation
-# http://mar2017.archive.ensembl.org/index.html
-ensembl_archive: mar2017.archive.ensembl.org
-ensembl_rel: 88
+# http://feb2014.archive.ensembl.org/index.html
+ensembl_archive: feb2014.archive.ensembl.org
+ensembl_rel: 75
+ensembl_genome: GRCh37.75
 
 # Specify cis-window around TSS for testing eQTLs (TSS +/- window)
 window: 1000000
