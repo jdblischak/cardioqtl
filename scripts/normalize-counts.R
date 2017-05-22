@@ -31,7 +31,7 @@ compare_ranks <- function(x, y) {
 
 # Specify the number of digits to output
 # http://stackoverflow.com/questions/3443687/formatting-decimal-places-in-r/12135122#12135122
-specify_decimal <- function(x, k) format(round(x, k), nsmall=k)
+specify_decimal <- function(x, k) format(round(x, k), nsmall = k)
 
 # Input ------------------------------------------------------------------------
 args <- commandArgs(trailingOnly = TRUE)

@@ -7,15 +7,6 @@
 	"name" : "{rule}-{wildcards}",
 	"logfile": "log/snake-{rule}-{wildcards}-%j.out"
     },
-    "kallisto_index" :
-    {
-        "mem" : 12000
-    },
-    "kallisto_quant" :
-    {
-	"mem" : 16000,
-	"tasks" : 8
-    },
     "subread_index" :
     {
 	"mem" : 8000
@@ -33,6 +24,10 @@
     {
 	"mem": 8000,
 	"tasks": 8
+    },
+    "pca" :
+    {
+	"mem": 8000
     },
     "select_exonic_snps" :
     {

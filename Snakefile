@@ -36,12 +36,14 @@ dir_genome = scratch + "genome-ensembl-release-" + str(ensembl_rel) + "/"
 dir_fq_tmp = scratch + "cardioqtl-fastq/"
 dir_bam = scratch + "cardioqtl-bam/"
 dir_counts = scratch + "cardioqtl-counts/"
+dir_pca = dir_data + "pca/"
 dir_vcf = dir_data + "vcf/"
 dir_id = dir_data + "id/"
 dir_tss = dir_data + "tss/"
 dir_pheno = dir_data + "pheno/"
 dir_plink = dir_data + "plink/"
 dir_gemma = dir_data + "gemma/"
+
 
 assert os.path.exists(dir_proj), "Project directory exists"
 assert os.path.exists(scratch), "Scratch directory exists"
@@ -61,6 +63,9 @@ chr_snps = config["chr_snps"]
 
 # Specify cis-window around TSS for testing eQTLs (TSS +/- window)
 window = config["window"]
+
+# Number of PCs to regress in linear model for testing eQTLs
+n_pcs = config["n_pcs"]
 
 # Input samples ----------------------------------------------------------------
 
@@ -95,6 +100,9 @@ rule gemma:
 
 rule prepare_tss:
     input: dynamic(dir_tss + "tss-{gene}.txt")
+
+rule run_pca:
+    input: expand(dir_pca + "pca-{pc}.txt", pc = [x + 1 for x in range(n_pcs)])
 
 rule counts_for_gemma:
     input: dir_data + "counts-normalized.txt"
@@ -188,6 +196,12 @@ rule normalize_counts:
     shell: "Rscript scripts/normalize-counts.R {input} > {output}"
 
 # Map eQTLs with GEMMA ---------------------------------------------------------
+
+rule pca:
+    input: dir_data + "counts-normalized.txt"
+    output: dir_pca + "pca-{pc}.txt"
+    params: pc = "{pc}"
+    shell: "Rscript scripts/compute-pca.R {params.pc} {input} > {output}"
 
 rule get_tss:
     input: dir_data + "counts-clean.txt"
