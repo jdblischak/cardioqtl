@@ -29,6 +29,14 @@
     {
 	"mem": 8000
     },
+    "format_plink_eqtl" :
+    {
+	"mem": 8000
+    },
+    "gemma" :
+    {
+	"mem": 4000
+    },
     "select_exonic_snps" :
     {
 	"mem" : 8000

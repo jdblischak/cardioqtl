@@ -95,8 +95,11 @@ def merge_fastq(wc):
 rule all:
     input: dir_gemma + "gemma-top.txt"
 
-rule gemma:
+rule run_gemma:
     input: dynamic(dir_gemma + "{gene}.assoc.txt")
+
+rule prepare_gemma:
+    input: dynamic(dir_gemma + "{gene}.bed")
 
 rule prepare_tss:
     input: dynamic(dir_tss + "tss-{gene}.txt")
@@ -197,6 +200,9 @@ rule normalize_counts:
 
 # Map eQTLs with GEMMA ---------------------------------------------------------
 
+localrules: get_tss_gene, create_filter_file_for_plink, pheno_file, \
+            parse_gemma, combine_gemma
+
 rule pca:
     input: dir_data + "counts-normalized.txt"
     output: dir_pca + "pca-{pc}.txt"
@@ -236,53 +242,44 @@ rule get_tss_gene:
             handle.write("\t".join(cols_new) + "\n")
             handle.close()
             i += 1
-            if i == 15145:
-                break
+            # For testing:
+            #if i == 25:
+            #    break
         f.close()
-
-rule subset_relatedness:
-    input: relat = dir_data + "relatedness-matrix-all.txt",
-           exp = dir_data + "counts-clean.txt"
-    output: dir_data + "relatedness-matrix-sub.txt"
-    shell: "Rscript scripts/subset-relatedness.R {input.exp} {input.relat} > {output}"
-
-# Merge VCF files (Plink only accepts one as input)
-rule merge_vcf:
-    input: vcf = expand(dir_vcf  + "dox-hg38-chr{CHR}.vcf.gz", CHR = chr_snps)
-    output: vcf = dir_vcf + "dox-hg38.vcf.gz"
-    shell: "cat <(zcat {input.vcf[0]} | grep CHROM) \
-                <(zcat {input.vcf} | grep -v '#') | \
-            gzip -c > {output.vcf}"
 
 rule create_filter_file_for_plink:
     input: exp = dir_data + "counts-clean.txt"
     output: filter = dir_plink + "filter-individuals.txt"
-    shell: """
-           head -n 1 {input.exp} | tr '\\t' '\\n' > /tmp/tmp-filter.txt
-           paste /tmp/tmp-filter.txt /tmp/tmp-filter.txt > {output.filter}
-           rm /tmp/tmp-filter.txt
-           """
+    run:
+        in_handle = open(input.exp, "r")
+        header = in_handle.readline()
+        individuals = header.strip().split("\t")
+        out_handle = open(output.filter, "w")
+        for i in individuals:
+            line = "HUTTERITES\t%s\n"%(i)
+            out_handle.write(line)
+        out_handle.close()
+        in_handle.close()
 
-# https://www.cog-genomics.org/plink/1.9/input#vcf
 # https://www.cog-genomics.org/plink/1.9/input#bed
-rule convert_to_binary_plink:
-    input: vcf = dir_vcf + "dox-hg38.vcf.gz",
+rule format_plink_eqtl:
+    input: bed = dir_plink + "hutt.imputed.rename.bed",
+           bim = dir_plink + "hutt.imputed.rename.bim",
+           fam = dir_plink + "hutt.imputed.rename.fam",
            filter = dir_plink + "filter-individuals.txt"
-    output: bed = dir_plink + "dox-hg38.bed",
-            bim = dir_plink + "dox-hg38.bim",
-            fam = dir_plink + "dox-hg38.fam"
-    params: out = dir_plink + "dox-hg38"
-    shell: "plink2 --vcf {input.vcf} \
-           --double-id \
-           --vcf-half-call missing \
-           --biallelic-only \
+    output: bed = dir_plink + "cardioqtl.bed",
+            bim = dir_plink + "cardioqtl.bim",
+            fam = dir_plink + "cardioqtl.fam"
+    params: prefix_in = dir_plink + "hutt.imputed.rename",
+            prefix_out = dir_plink + "cardioqtl"
+    shell: "plink2 -bfile {params.prefix_in} \
            --make-bed \
            --keep {input.filter} \
            --indiv-sort natural \
-           --out {params.out}"
+           --out {params.prefix_out}"
 
 # Format is:
-# Column 1/2 = IID/FID
+# Column 1/2 = FID/IID
 # Column 3 = Phenotype (i.e. gene expression levels)
 rule pheno_file:
     input: tss = dir_tss + "tss-{gene}.txt",
@@ -290,39 +287,50 @@ rule pheno_file:
     output: dir_pheno + "{gene}.pheno"
     params: gene = "{gene}"
     shell: """
+           # Number of individuals
+           n=`head -n 1 {input.counts} | awk '{{print NF}}'`
+           # Temp file to store FID
+           fid=/tmp/fid-{params.gene}
+           touch $fid
+           for i in `seq $n`
+           do
+             echo HUTTERITES >> $fid
+           done
+
            paste \
-           <(head -n 1 {input.counts} | tr '\\t' '\\n') \
+           $fid \
            <(head -n 1 {input.counts} | tr '\\t' '\\n') \
            <(grep {params.gene} {input.counts} | tr '\\t' '\\n' | sed -e '1d') \
            > {output}
+           rm $fid
            """
 
 rule plink_per_gene:
-    input: bed = dir_plink + "dox-hg38.bed",
-           bim = dir_plink + "dox-hg38.bim",
-           fam = dir_plink + "dox-hg38.fam",
+    input: bed = dir_plink + "cardioqtl.bed",
+           bim = dir_plink + "cardioqtl.bim",
+           fam = dir_plink + "cardioqtl.fam",
            tss = dir_tss + "tss-{gene}.txt",
            pheno = dir_pheno + "{gene}.pheno"
-    output: bed = dir_plink + "{gene}.bed",
-            bim = dir_plink + "{gene}.bim",
-            fam = dir_plink + "{gene}.fam"
-    params: prefix = dir_plink + "dox-hg38",
-            out = dir_plink + "{gene}"
-    shell: "plink2 --bfile {params.prefix} --make-bed \
+    output: bed = dir_gemma + "{gene}.bed",
+            bim = dir_gemma + "{gene}.bim",
+            fam = dir_gemma + "{gene}.fam"
+    params: prefix_in = dir_plink + "cardioqtl",
+            prefix_out = dir_gemma + "{gene}"
+    shell: "plink2 --bfile {params.prefix_in} --make-bed \
            --pheno {input.pheno} \
            --chr `cut -f2 {input.tss}` \
            --from-bp `cut -f3 {input.tss}` \
            --to-bp  `cut -f4 {input.tss}` \
-           --out {params.out}"
+           --out {params.prefix_out}"
 
-rule run_gemma:
-    input: bed = dir_plink + "{gene}.bed",
-           bim = dir_plink + "{gene}.bim",
-           fam = dir_plink + "{gene}.fam",
-           relat = dir_data + "relatedness-matrix-sub.txt"
+rule gemma:
+    input: bed = dir_gemma + "{gene}.bed",
+           bim = dir_gemma + "{gene}.bim",
+           fam = dir_gemma + "{gene}.fam",
+           relat = dir_data + "relatedness-matrix-all.txt"
     output: assoc = dir_gemma + "{gene}.assoc.txt",
             log = dir_gemma + "{gene}.log.txt"
-    params: pre_plink = dir_plink + "{gene}",
+    params: pre_plink = dir_gemma + "{gene}",
             pre_gemma = "{gene}",
             outdir = dir_gemma
     shell: """

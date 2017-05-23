@@ -32,11 +32,9 @@ ensembl <- useMart(host = archive,
 
 tss_all <- getBM(attributes = c("ensembl_gene_id",
                                 "chromosome_name",
-                                "transcription_start_site",
                                 "start_position",
                                 "end_position",
                                 "strand",
-                                "external_gene_name",
                                 "gene_biotype"),
                  filters = "ensembl_gene_id",
                  values = genes,
@@ -71,7 +69,7 @@ suppressPackageStartupMessages(library("dplyr"))
 
 tss_per_gene <- tss_all %>%
   group_by(ensembl_gene_id, chromosome_name,
-           strand, external_gene_name, gene_biotype) %>%
+           strand, gene_biotype) %>%
   summarize(tss = if (all(strand == 1)) min(start_position) else max(end_position)) %>%
   ungroup() %>%
   arrange(ensembl_gene_id)
@@ -81,10 +79,9 @@ tss_per_gene <- tss_all %>%
 tss_out <- tss_per_gene %>%
   rename(gene = ensembl_gene_id,
          chr = chromosome_name,
-         name = external_gene_name,
          biotype = gene_biotype) %>%
   mutate(strand = ifelse(strand == 1, "+", "-")) %>%
-  select(gene, chr, tss, strand, name, biotype)
+  select(gene, chr, tss, strand, biotype)
 
 # Output -----------------------------------------------------------------------
 write.table(tss_out, "", quote = FALSE, sep = "\t",
