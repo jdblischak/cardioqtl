@@ -35,20 +35,26 @@ stopifnot(file.exists(input))
 # n_pcs <- 10
 # input <- "../data/counts-normalized.txt"
 raw <- read.delim(input, check.names = FALSE)
-stopifnot(n_pcs > 0, n_pcs <= ncol(raw))
+stopifnot(n_pcs >= 0, n_pcs <= ncol(raw))
 
 # Run PCA ----------------------------------------------------------------------
-pca <- run_pca(raw)
-out <- pca$x[, seq(n_pcs), drop = FALSE]
-stopifnot(rownames(out) == colnames(raw), is.matrix(out))
+if (n_pcs > 0) {
+  pca <- run_pca(raw)
+  out <- pca$x[, seq(n_pcs), drop = FALSE]
+  stopifnot(rownames(out) == colnames(raw), is.matrix(out))
+}
 
 # Output -----------------------------------------------------------------------
 
 # The first column needs to be a vector of 1's to represent the intercept for
 # GEMMA. First convert to character matrix to specify the number of decimal
 # places (6) used for the PCs.
-out_character <- apply(out, 2, specify_decimal, k = 6)
-out_character <- cbind("1", out_character)
+if (n_pcs > 0) {
+  out_character <- apply(out, 2, specify_decimal, k = 6)
+  out_character <- cbind("1", out_character)
+} else {
+  out_character <- matrix("1", nrow = ncol(raw))
+}
 
 write.table(out_character, file = "",
             quote = FALSE, sep = "\t", row.names = FALSE, col.names = FALSE)

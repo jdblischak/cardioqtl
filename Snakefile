@@ -105,7 +105,7 @@ rule prepare_tss:
     input: dynamic(dir_tss + "tss-{gene}.txt")
 
 rule run_pca:
-    input: expand(dir_pca + "pca-{pc}.txt", pc = [x + 1 for x in range(n_pcs)])
+    input: expand(dir_pca + "pca-{pc}.txt", pc = [x for x in range(n_pcs + 1)])
 
 rule counts_for_gemma:
     input: dir_data + "counts-normalized.txt"
