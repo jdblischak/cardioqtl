@@ -39,11 +39,9 @@ dir_counts = scratch + "cardioqtl-counts/"
 dir_pca = dir_data + "pca/"
 dir_vcf = dir_data + "vcf/"
 dir_id = dir_data + "id/"
-dir_tss = dir_data + "tss/"
 dir_pheno = dir_data + "pheno/"
 dir_plink = dir_data + "plink/"
 dir_gemma = dir_data + "gemma/"
-
 
 assert os.path.exists(dir_proj), "Project directory exists"
 assert os.path.exists(scratch), "Scratch directory exists"
@@ -92,17 +90,14 @@ def merge_fastq(wc):
 
 # Targets ----------------------------------------------------------------------
 
-rule all:
-    input: dir_gemma + "gemma-top.txt"
-
 rule run_gemma:
-    input: dynamic(dir_gemma + "{gene}.assoc.txt")
+    input: expand(dir_gemma + "top-pca-{pc}.txt", pc = [x for x in range(n_pcs + 1)])
 
 rule prepare_gemma:
-    input: dynamic(dir_gemma + "{gene}.bed")
-
-rule prepare_tss:
-    input: dynamic(dir_tss + "tss-{gene}.txt")
+    input: dir_data + "tss.txt",
+           dir_plink + "cardioqtl.bed",
+           dir_data + "counts-normalized.txt",
+           expand(dir_pca + "pca-{pc}.txt", pc = [x for x in range(n_pcs + 1)])
 
 rule run_pca:
     input: expand(dir_pca + "pca-{pc}.txt", pc = [x for x in range(n_pcs + 1)])
@@ -200,8 +195,7 @@ rule normalize_counts:
 
 # Map eQTLs with GEMMA ---------------------------------------------------------
 
-localrules: get_tss_gene, create_filter_file_for_plink, pheno_file, \
-            parse_gemma, combine_gemma
+localrules: create_filter_file_for_plink
 
 rule pca:
     input: dir_data + "counts-normalized.txt"
@@ -211,41 +205,8 @@ rule pca:
 
 rule get_tss:
     input: dir_data + "counts-clean.txt"
-    output: dir_tss + "tss.txt"
+    output: dir_data + "tss.txt"
     shell: "Rscript scripts/get-tss.R {ensembl_archive} {input} > {output}"
-
-rule get_tss_gene:
-    input: dir_tss + "tss.txt"
-    output: dynamic(dir_tss + "tss-{gene}.txt")
-    params: outdir = dir_tss
-    run:
-        i = 0
-        f = open(input[0], "r")
-        for line in f:
-            cols = line.strip().split("\t")
-            gene = cols[0]
-            assert gene[:4] == "ENSG", "Proper gene name"
-            chrom = cols[1]
-            if chrom not in chr_snps:
-                continue
-            tss = int(cols[2])
-            start = tss - window
-            if start < 0:
-                start = str(0)
-            else:
-                start = str(start)
-            end = tss + window
-            end = str(end)
-            fname = params.outdir + "tss-" + gene + ".txt"
-            handle = open(fname, "w")
-            cols_new = [gene, chrom, start, end] + cols[3:]
-            handle.write("\t".join(cols_new) + "\n")
-            handle.close()
-            i += 1
-            # For testing:
-            #if i == 25:
-            #    break
-        f.close()
 
 rule create_filter_file_for_plink:
     input: exp = dir_data + "counts-clean.txt"
@@ -278,81 +239,17 @@ rule format_plink_eqtl:
            --indiv-sort natural \
            --out {params.prefix_out}"
 
-# Format is:
-# Column 1/2 = FID/IID
-# Column 3 = Phenotype (i.e. gene expression levels)
-rule pheno_file:
-    input: tss = dir_tss + "tss-{gene}.txt",
-           counts = dir_data + "counts-normalized.txt"
-    output: dir_pheno + "{gene}.pheno"
-    params: gene = "{gene}"
-    shell: """
-           # Number of individuals
-           n=`head -n 1 {input.counts} | awk '{{print NF}}'`
-           # Temp file to store FID
-           fid=/tmp/fid-{params.gene}
-           touch $fid
-           for i in `seq $n`
-           do
-             echo HUTTERITES >> $fid
-           done
-
-           paste \
-           $fid \
-           <(head -n 1 {input.counts} | tr '\\t' '\\n') \
-           <(grep {params.gene} {input.counts} | tr '\\t' '\\n' | sed -e '1d') \
-           > {output}
-           rm $fid
-           """
-
-rule plink_per_gene:
-    input: bed = dir_plink + "cardioqtl.bed",
-           bim = dir_plink + "cardioqtl.bim",
-           fam = dir_plink + "cardioqtl.fam",
-           tss = dir_tss + "tss-{gene}.txt",
-           pheno = dir_pheno + "{gene}.pheno"
-    output: bed = dir_gemma + "{gene}.bed",
-            bim = dir_gemma + "{gene}.bim",
-            fam = dir_gemma + "{gene}.fam"
-    params: prefix_in = dir_plink + "cardioqtl",
-            prefix_out = dir_gemma + "{gene}"
-    shell: "plink2 --bfile {params.prefix_in} --make-bed \
-           --pheno {input.pheno} \
-           --chr `cut -f2 {input.tss}` \
-           --from-bp `cut -f3 {input.tss}` \
-           --to-bp  `cut -f4 {input.tss}` \
-           --out {params.prefix_out}"
-
 rule gemma:
-    input: bed = dir_gemma + "{gene}.bed",
-           bim = dir_gemma + "{gene}.bim",
-           fam = dir_gemma + "{gene}.fam",
-           relat = dir_data + "relatedness-matrix-all.txt"
-    output: assoc = dir_gemma + "{gene}.assoc.txt",
-            log = dir_gemma + "{gene}.log.txt"
-    params: pre_plink = dir_gemma + "{gene}",
-            pre_gemma = "{gene}",
-            outdir = dir_gemma
-    shell: """
-           gemma -bfile {params.pre_plink} \
-           -k {input.relat} -km 2 \
-           -lmm 2 \
-           -o {params.pre_gemma}
-
-           mv output/{params.pre_gemma}* {params.outdir}
-           """
-
-rule parse_gemma:
-    input: assoc = dir_gemma + "{gene}.assoc.txt"
-    output: dir_gemma + "{gene}.top.txt"
-    params: gene = "{gene}"
-    shell: "Rscript scripts/parse-gemma.R {params.gene} {input} > {output}"
-
-rule combine_gemma:
-    input: top = dynamic(dir_gemma + "{gene}.top.txt")
-    output: dir_gemma + "gemma-top.txt"
-    shell: "cat <(head -n 1 {input.top[0]}) \
-                <(cat {input} | grep -v mle) > {output}"
+    input: counts = dir_data + "counts-normalized.txt",
+           tss = dir_data + "tss.txt",
+           pca = dir_pca + "pca-{pc}.txt",
+           relat = dir_data + "relatedness-matrix-all.txt",
+           bed = dir_plink + "cardioqtl.bed",
+           bim = dir_plink + "cardioqtl.bim",
+           fam = dir_plink + "cardioqtl.fam"
+    output: top = dir_gemma + "top-pca-{pc}.txt"
+    params: prefix_plink = dir_plink + "cardioqtl"
+    shell: "Rscript scripts/run-gemma.R {input.counts} {input.tss} {input.pca} {input.relat} {params.prefix_plink} {window} {dir_pheno} {dir_plink} {dir_gemma}"
 
 # Verify identity with verifyBamID ---------------------------------------------
 
