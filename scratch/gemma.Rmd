@@ -18,40 +18,78 @@ Results from GEMMA.
 
 ```{r packages, message=FALSE}
 library("cowplot")
-library("dplyr")
 library("ggplot2")
+library("magrittr")
+library("plyr"); library("dplyr")
+library("stringr")
+library("tidyr")
 theme_set(theme_cowplot(font_size = 12))
 ```
 
-Input Subread counts.
+Input GEMMA results.
 
-```{r}
-gemma <- read.delim("../data/gemma/gemma-top.txt", stringsAsFactors = FALSE)
-dim(gemma)
-head(gemma)
+```{r input-gemma}
+f_gemma <- Sys.glob("../data/gemma/top-pca-*.txt")
+l_gemma <- list()
+for (f in f_gemma) {
+  n <- f %>% basename %>% str_replace("top-", "") %>% str_replace(".txt", "")
+  # if (n %in% c("pca-40")) next
+  l_gemma[[n]] <- read.delim(f, stringsAsFactors = FALSE)
+}
+d_gemma <- ldply(l_gemma, .id = "analysis")
+d_gemma$analysis <- factor(d_gemma$analysis,
+                           levels = paste0("pca-", c(0:10, 15, 20, 30, 40)))
+summary(d_gemma)
 ```
 
 ## Initial inspection
 
+For the intial inspection, juse use the base case of zero PCs as covariates.
+
 ```{r gemma-qc}
+gemma <- d_gemma %>% filter(analysis == "pca-0")
 p_n_snps <- ggplot(gemma, aes(x = n_snps)) +
   geom_histogram() +
   labs(x = "Number of SNPs tested",
        y = "Number of genes",
        title = "Number of SNPs\ntested per gene")
-p_n_miss <- ggplot(gemma, aes(x = n_miss)) +
-  scale_x_continuous(breaks = seq(0, max(gemma$n_miss))) +
-  geom_histogram() +
-    labs(x = "Number of missing individuals",
-       y = "Number of genes",
-       title = "Number of missing individuals\nper eQTL-gene test")
 p_n_chr <- ggplot(gemma, aes(x = chr)) +
   geom_bar() +
   scale_x_continuous(breaks = seq(1, max(gemma$chr), 2)) +
   labs(x = "Autosomes",
        y = "Number of genes tested",
        title = "Number of genes\ntested per chromosome")
-plot_grid(p_n_snps, p_n_miss, p_n_chr, nrow = 1)
+plot_grid(p_n_snps, p_n_chr, nrow = 1)
+```
+
+The following metrics will be slightly different across the PC analyses because they do not always find the same top SNP, but the pca-0 case should be representative.
+
+```{r gemma-miss-af-mle}
+p_n_miss <- ggplot(gemma, aes(x = n_miss)) +
+  scale_x_continuous(breaks = seq(0, max(gemma$n_miss))) +
+  geom_histogram() +
+    labs(x = "Number of missing individuals",
+       y = "Number of genes",
+       title = "Number of missing individuals\nper eQTL-gene test")
+p_af <- ggplot(gemma, aes(x = af)) +
+  scale_x_continuous(breaks = seq(0, max(gemma$af), by = 0.1)) +
+  geom_histogram() +
+    labs(x = "Allele Frequency",
+       y = "Number of eQTLs (1 per gene)",
+       title = "Allele frequency distribution of eQTLs")
+plot_grid(p_n_miss, p_af)
+```
+
+The metric "l_mle" is the maximum likelihood estimate for $\lambda$. From the manual:
+
+> The algorithm calculates either REML or MLE estimate of $\lambda$ in the evaluation
+> interval from 1×10^−5^ (corresponding to almost pure environmental effect) to
+> 1×10^5^ (corresponding to almost pure genetic effect).
+
+Across all the analyses, $\lambda$ is always estimated to be 1x10^5^.
+
+```{r l_mle}
+unique(d_gemma$l_mle)
 ```
 
 ## Multiple testing correction
@@ -72,87 +110,124 @@ bonferroni <- function(p, n) {
   return(p_b)
 }
 
-gemma$p_bonf <- bonferroni(gemma$p_lrt, gemma$n_snps)
+d_gemma$p_bonf <- bonferroni(d_gemma$p_lrt, d_gemma$n_snps)
 ```
 
 Benjamini-Hochberg across eQTLs.
 
 ```{r bh}
-gemma$p_bh <- p.adjust(gemma$p_bonf, method = "BH")
+d_gemma <- d_gemma %>%
+  group_by(analysis) %>%
+  mutate(p_bh = p.adjust(p_bonf, method = "BH")) %>%
+  ungroup()
 ```
 
-```{r gemma-p-values}
-p_p_lrt <- ggplot(gemma, aes(x = p_lrt)) +
+Inspecting the p-value distributions.
+
+```{r gemma-p-values, fig.width=12, fig.height=6}
+d_gemma_p <- d_gemma %>%
+  select(analysis, n_pcs, chr, starts_with("p_")) %>%
+  gather("type", "p", starts_with("p_"))
+d_gemma_p$type <- factor(d_gemma_p$type,
+                         levels = c("p_lrt", "p_bonf", "p_bh"),
+                         labels = c("Nominal", "Bonferroni per gene",
+                                    "BH across genes"))
+p_pval <- ggplot(d_gemma_p, aes(x = p)) +
   geom_histogram() +
+  facet_grid(type ~ analysis, scales = "free_y") +
   scale_x_continuous(breaks = seq(0, 1, 0.25),
                      limits = c(-0.1, 1.1)) +
+  theme(axis.text.x = element_text(angle = -45, vjust = 0.01)) +
   labs(x = "p-value",
        y = "Number of eQTLs",
-       title = "p-values from\nlikelihood ratio test")
-p_p_bonf <- ggplot(gemma, aes(x = p_bonf)) +
-  geom_histogram() +
-  scale_x_continuous(breaks = seq(0, 1, 0.25),
-                     limits = c(-0.1, 1.1)) +
-  labs(x = "p-value",
-       y = "Number of eQTLs",
-       title = "Bonferroni adjusted p-values\nwithin each gene")
-p_p_bh <- ggplot(gemma, aes(x = p_bh)) +
-  geom_histogram() +
-  scale_x_continuous(breaks = seq(0, 1, 0.25),
-                     limits = c(-0.1, 1.1)) +
-  labs(x = "p-value",
-       y = "Number of eQTLs",
-       title = "BH adjusted p-values\nacross eQTLs")
-plot_grid(p_p_lrt, p_p_bonf, p_p_bh, nrow = 1)
+       title = "p-values distributions")
+p_pval
 ```
 
 ## Significant eQTLs
 
-```{r}
-sum(gemma$p_bh < 0.05)
-sum(gemma$p_bh < 0.1)
-sum(gemma$p_bh < 0.2)
-table(gemma$p_bh < 0.05, gemma$chr)
-```
+Optimize at 10% FDR.
 
-```{r gemma-per-chr}
-gemma_chr <- gemma %>%
-  group_by(chr) %>%
-  summarize(n_total = n(),
-            n_sig = sum(p_bh < 0.05),
-            n_stand = n_sig / n_total)
-p_n_sig <- ggplot(gemma_chr, aes(x = chr, y = n_sig)) +
-  geom_bar(stat = "identity") +
-  scale_x_continuous(breaks = seq(1, max(gemma_chr$chr), 2)) +
-  scale_y_continuous(breaks = seq(0, max(gemma_chr$n_sig), 2)) +
-  labs(x = "Autosomes",
-       y = "Number of eQTLs with p < 0.05",
-       title = "Significant eQTLs per autosome")
-p_n_stand <- ggplot(gemma_chr, aes(x = chr, y = n_stand)) +
-  geom_bar(stat = "identity") +
-  scale_x_continuous(breaks = seq(1, max(gemma_chr$chr), 2)) +
-  # scale_y_continuous(breaks = seq(0, max(gemma_chr$n_sig), 2)) +
-  labs(x = "Autosomes",
-       y = "Number of eQTLs with p < 0.05 / Number of genes",
-       title = "Significant eQTLs per autosome\nstandardized by number of genes tested")
-plot_grid(p_n_sig, p_n_stand, nrow = 1)
-```
-
-```{r gemma-fdr-cutoff}
-cutoffs <- seq(0, 0.5, by = 0.05)
-n_sig <- numeric(length = length(cutoffs))
-for (i in seq_along(cutoffs)) {
-  n_sig[i] <- sum(gemma$p_bh < cutoffs[i])
-}
-d_cutoffs <- data.frame(cutoffs, n_sig)
-ggplot(d_cutoffs, aes(x = cutoffs, y = n_sig)) +
+```{r gemma-sig}
+d_gemma_sig <- d_gemma %>%
+  group_by(analysis, n_pcs) %>%
+  summarize(sig = sum(p_bh < 0.10))
+p_sig <- ggplot(d_gemma_sig, aes(x = n_pcs, y = sig)) +
   geom_point() +
-  scale_x_continuous(breaks = cutoffs) +
-  labs(x = "BH FDR cutoff",
-       y = "Number of significant eQTLs",
-       title = "Effect of FDR cutoff")
+  scale_x_continuous(breaks = seq(min(d_gemma_sig$n_pcs),
+                                  max(d_gemma$n_pcs), by = 1)) +
+  labs(x = "Number of PCs included as covariates",
+       y = "Number of significant eQTLs at 10% FDR",
+       title = "Effect of PCs on number of eQTLs detected")
+p_sig
 ```
 
+## Incorporate TSS
+
+Input TSS information.
+
+```{r input-tss}
+tss <- read.table("../data/tss.txt", stringsAsFactors = FALSE)
+colnames(tss) <- c("gene", "chr", "tss", "strand", "biotype")
+head(tss)
+```
+
+Merge with GEMMA results.
+
+```{r merge-tss}
+d_gemma_tss <- merge(d_gemma, tss)
+```
+
+Calculate distance between eQTL and TSS.
+
+```{r eQTL-distance}
+d_gemma_tss$dist <- ifelse(d_gemma_tss$strand == "+",
+                           d_gemma_tss$ps - d_gemma_tss$tss,
+                           -(d_gemma_tss$ps - d_gemma_tss$tss))
+d_gemma_tss$sig <- d_gemma_tss$p_bh < 0.10
+```
+
+Plot.
+
+```{r dist-density}
+p_dist <- ggplot(d_gemma_tss %>% filter(analysis != "pca-40"),
+                 aes(x = dist, color = sig)) +
+  geom_density() +
+  facet_wrap(~analysis, ncol = 5) +
+  scale_x_continuous(name = "Distance from TSS (upstream <- -> downstream)",
+                     breaks = seq(-10^6, 10^6, by = 50 * 10^4),
+                     labels = c("-1 Mb", "-500 kb", "TSS", "+500 kb", "+1 Mb"),
+                     limits = c(-10^6, 10^6)) +
+  theme(axis.text.x = element_text(angle = -45, hjust = 0.5, vjust = 0.75)) +
+  scale_color_discrete(name = "", labels = c("non-eQTL", "eQTL at 10% FDR"))
+p_dist
+```
+
+```{r dist-hist}
+p_dist_hist <- ggplot(d_gemma_tss, aes(x = dist, fill = sig)) +
+  geom_histogram() +
+  facet_wrap(~analysis, ncol = 5) +
+  scale_x_continuous(name = "Distance from TSS (upstream <- -> downstream)",
+                     breaks = seq(-10^6, 10^6, by = 50 * 10^4),
+                     labels = c("-1 Mb", "-500 kb", "TSS", "+500 kb", "+1 Mb"),
+                     limits = c(-10^6, 10^6)) +
+  theme(axis.text.x = element_text(angle = -45, hjust = 0.5, vjust = 0.75)) +
+  scale_fill_discrete(name = "", labels = c("non-eQTL", "eQTL at 10% FDR"))
+p_dist_hist
+```
+
+```{r dist-by-pc}
+p_dist_pc <- ggplot(d_gemma_tss %>% filter(analysis != "pca-40"),
+                    aes(x = dist, color = analysis)) +
+  geom_density() +
+  facet_wrap(~sig) +
+  scale_x_continuous(name = "Distance from TSS (upstream <- -> downstream)",
+                     breaks = seq(-10^6, 10^6, by = 50 * 10^4),
+                     labels = c("-1 Mb", "-500 kb", "TSS", "+500 kb", "+1 Mb"),
+                     limits = c(-10^6, 10^6)) +
+  theme(axis.text.x = element_text(angle = -45, hjust = 0.5, vjust = 0.75))
+p_dist_pc
+```
 
 ## Session information
 

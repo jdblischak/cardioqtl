@@ -223,9 +223,7 @@ for (i in seq_along(genes)) {
                        outdir = dir_gemma_pca)
   message("Parse GEMMA")
   f_gemma_top <- sub(".assoc.txt", ".top.txt", f_gemma)
-  message(f_gemma_top)
   parse_gemma(f = f_gemma, gene = g, n_pcs = n_pcs, outfile = f_gemma_top)
-  message(f_top)
   # Write to global results file
   system(sprintf("cat %s | sed -e '1d' >> %s", f_gemma_top, f_top))
 }

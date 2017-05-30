@@ -91,7 +91,7 @@ def merge_fastq(wc):
 # Targets ----------------------------------------------------------------------
 
 rule run_gemma:
-    input: expand(dir_gemma + "top-pca-{pc}.txt", pc = [x for x in range(n_pcs + 1)])
+    input: expand(dir_gemma + "top-pca-{pc}.txt", pc = [x for x in range(n_pcs + 1)] + [15, 20, 30, 40])
 
 rule prepare_gemma:
     input: dir_data + "tss.txt",
