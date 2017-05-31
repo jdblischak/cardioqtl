@@ -42,6 +42,7 @@ dir_id = dir_data + "id/"
 dir_pheno = dir_data + "pheno/"
 dir_plink = dir_data + "plink/"
 dir_gemma = dir_data + "gemma/"
+dir_gwas = dir_data + "gwas/"
 
 assert os.path.exists(dir_proj), "Project directory exists"
 assert os.path.exists(scratch), "Scratch directory exists"
@@ -64,6 +65,9 @@ window = config["window"]
 
 # Number of PCs to regress in linear model for testing eQTLs
 n_pcs = config["n_pcs"]
+
+# GWAS phenotypes
+phenos = config["phenos"]
 
 # Input samples ----------------------------------------------------------------
 
@@ -406,3 +410,84 @@ rule combine_verify:
     shell:
         "head -n 1 {input[0]} > {output};"
         "cat {input} | grep -v \"id\" | sort -k1n >> {output}"
+
+# Map phenotype QTLs with GEMMA ------------------------------------------------
+
+rule run_gwas:
+    input: expand(dir_gwas + "{pheno}/gemma-{pheno}.assoc.txt", pheno = phenos)
+
+# Remove any eQTL individuals from GWAS and sort by IID
+rule filter_gwas:
+    input: raw = dir_gwas + "{pheno}/raw-{pheno}.txt",
+           filter = dir_plink + "filter-individuals.txt"
+    output: clean = dir_gwas + "{pheno}/clean-{pheno}.txt"
+    shell: "Rscript scripts/filter-gwas.R {input.raw} {input.filter} > {output.clean}"
+
+# Split GWAS data into 3 files (none have header rows):
+#
+# 1. keep: FID/IID to filter individuals with PLINK
+# 2. pheno: FID/IID/phenotype to add phenotype with PLINK
+# 3. cov: covariates to model covariates with GEMMA
+rule split_gwas:
+    input: clean = dir_gwas + "{pheno}/clean-{pheno}.txt"
+    output: keep = dir_gwas + "{pheno}/keep-{pheno}.txt",
+            pheno = dir_gwas + "{pheno}/pheno-{pheno}.txt",
+            cov = dir_gwas + "{pheno}/cov-{pheno}.txt"
+    run:
+        clean = open(input.clean, "r")
+        header = clean.readline()
+        assert header[:6] == "findiv", \
+            "IID is in column 1"
+        keep = open(output.keep, "w")
+        pheno = open(output.pheno, "w")
+        cov = open(output.cov, "w")
+        for line in clean:
+            cols = line.strip("\n").split("\t")
+            iid = cols[0]
+            trait = cols[1]
+            covariates = cols[2:]
+            keep.write("HUTTERITES\t%s\n"%(iid))
+            pheno.write("HUTTERITES\t%s\t%s\n"%(iid, trait))
+            cov.write("\t".join(covariates) + "\n")
+        clean.close()
+        keep.close()
+        pheno.close()
+        cov.close()
+
+
+# Create PLINK file for GWAS
+rule create_gwas_plink:
+    input: bed = dir_plink + "hutt.imputed.rename.bed",
+           bim = dir_plink + "hutt.imputed.rename.bim",
+           fam = dir_plink + "hutt.imputed.rename.fam",
+           keep = dir_gwas + "{pheno}/keep-{pheno}.txt",
+           pheno = dir_gwas + "{pheno}/pheno-{pheno}.txt"
+    output: bed = dir_gwas + "{pheno}/plink-{pheno}.bed",
+            bim = dir_gwas + "{pheno}/plink-{pheno}.bim",
+            fam = dir_gwas + "{pheno}/plink-{pheno}.fam"
+    params: prefix_in = dir_plink + "hutt.imputed.rename",
+            prefix_out = dir_gwas + "{pheno}/plink-{pheno}"
+    shell: "plink2 --bfile {params.prefix_in} --make-bed \
+           --keep {input.keep} --indiv-sort natural \
+           --pheno {input.pheno}  --out {params.prefix_out}"
+
+# Run GEMMA on each phenotype. Minor allele frequency cutoff relaxed
+# from default of 0.01 to 0.05 for consistency with Cusanovich et al.,
+# 2016.
+rule gwas_gemma:
+    input: bed = dir_gwas + "{pheno}/plink-{pheno}.bed",
+           bim = dir_gwas + "{pheno}/plink-{pheno}.bim",
+           fam = dir_gwas + "{pheno}/plink-{pheno}.fam",
+           cov = dir_gwas + "{pheno}/cov-{pheno}.txt",
+           relat = dir_data + "relatedness-matrix-all.txt"
+    output: assoc = dir_gwas + "{pheno}/gemma-{pheno}.assoc.txt",
+            log = dir_gwas + "{pheno}/gemma-{pheno}.log.txt"
+    params: prefix_in = dir_gwas + "{pheno}/plink-{pheno}",
+            prefix_out = "gemma-{pheno}",
+            outdir = dir_gwas + "{pheno}"
+    shell: "gemma -bfile {params.prefix_in} \
+           -k {input.relat} -km 2 \
+           -c {input.cov} -lmm 4 \
+           -maf 0.05 \
+           -o {params.prefix_out} \
+           ; mv output/{params.prefix_out}* {params.outdir}"

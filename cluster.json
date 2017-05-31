@@ -44,5 +44,9 @@
     "verify_bam" :
     {
 	"mem" : 16000
+    },
+        "gwas_gemma" :
+    {
+	"mem" : 16000
     }
 }

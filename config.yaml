@@ -26,8 +26,13 @@ chr_genes: ["1", "2", "3", "4", "5", "6", "7", "8", "9",
             "X", "Y", "MT"]
 # For mapping eQTLs
 chr_snps: ["1", "2", "3", "4", "5", "6", "7", "8", "9",
-            "10", "11", "12", "13", "14", "15", "16",
-            "17", "18", "19", "20", "21", "22"]
+           "10", "11", "12", "13", "14", "15", "16",
+           "17", "18", "19", "20", "21", "22"]
 
 # Specify number of PCs to regress
 n_pcs: 10
+
+# GWAS on phenotypes
+phenos: ["bri", "chi", "cho", "cim", "dbp", "eno", "eos",
+         "fev", "fvc", "hdl", "ige", "lav", "ldl", "lvm",
+         "lym", "mon", "neu", "sbp", "tri", "ykl"]
