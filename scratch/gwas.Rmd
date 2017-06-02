@@ -1,0 +1,89 @@
+---
+title: "GWAS"
+output: html_document
+params:
+  trait: bri
+---
+
+**Last updated:** `r Sys.Date()`
+
+**Code version:** `r git2r::commits()[[1]]@sha`
+
+```{r params}
+if (exists("params")) trait <- params$trait else trait <- "bri"
+```
+
+```{r knitr, include=FALSE}
+library("knitr")
+opts_chunk$set(fig.width = 10, fig.height = 10,
+               fig.path = paste0("figure/", trait, "/"))
+```
+
+Results from GWAS of `r trait`
+
+## Setup
+
+```{r packages, message=FALSE}
+library("cowplot")
+library("ggplot2")
+library("qqman")
+library("readr")
+theme_set(theme_cowplot(font_size = 12))
+theme_update(plot.subtitle = element_text(size = rel(1.5)))
+```
+
+Input GWAS results.
+
+```{r input-gemma, message=FALSE}
+f_gwas <- sprintf("../data/gwas/%s/gemma-%s.assoc.txt", trait, trait)
+d_gwas <- read_tsv(f_gwas)
+```
+
+## Initial inspection
+
+```{r}
+dim(d_gwas)
+colnames(d_gwas)
+```
+
+```{r initial-inspection}
+p_af <- ggplot(d_gwas, aes(x = af)) +
+  geom_density() +
+  labs(title = "Allele frequency",
+       subtitle = trait)
+p_n_miss <- ggplot(d_gwas, aes(x = n_miss)) +
+  geom_density() +
+  labs(title = "Number of missing individuals",
+       subtitle = trait)
+p_beta <- ggplot(d_gwas, aes(x = beta)) +
+  geom_density() +
+  labs(trait, "Effect size",
+       subtitle = trait)
+p_l_mle <- ggplot(d_gwas, aes(x = l_mle)) +
+  geom_density() +
+  labs(title = "lambda",
+       subtitle = trait)
+plot_grid(p_af, p_n_miss, p_beta, p_l_mle)
+```
+
+## Number of significant associations
+
+```{r manhattan-qq, fig.height=5}
+p <- d_gwas$p_lrt
+n_sig <- sum(p.adjust(p, method = "bonferroni") < 0.05)
+title <- paste0(trait, " (", n_sig, ")")
+op <- par(mfrow = c(1, 2))
+sky <- function(x, ...) {
+  manhattan(x, chr = "chr", bp = "ps", p = "p_lrt", snp = "rs", ...)
+}
+sky(d_gwas, main = title)
+qq(d_gwas$p_lrt, main = title)
+par(op)
+```
+
+## Session information
+
+```{r session-info}
+sessionInfo()
+```
+

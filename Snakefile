@@ -414,7 +414,7 @@ rule combine_verify:
 # Map phenotype QTLs with GEMMA ------------------------------------------------
 
 rule run_gwas:
-    input: expand(dir_gwas + "{pheno}/gemma-{pheno}.assoc.txt", pheno = phenos)
+    input: expand(dir_gwas + "{pheno}/gwas-{pheno}.html", pheno = phenos)
 
 # Remove any eQTL individuals from GWAS and sort by IID
 rule filter_gwas:
@@ -491,3 +491,9 @@ rule gwas_gemma:
            -maf 0.05 \
            -o {params.prefix_out} \
            ; mv output/{params.prefix_out}* {params.outdir}"
+
+rule gwas_report:
+    input: assoc = dir_gwas + "{pheno}/gemma-{pheno}.assoc.txt",
+           template = "scratch/gwas.Rmd"
+    output: dir_gwas + "{pheno}/gwas-{pheno}.html"
+    shell: "Rscript scripts/report-gwas.R {input.template} {wildcards.pheno} {output}"
