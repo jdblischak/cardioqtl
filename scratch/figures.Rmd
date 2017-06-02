@@ -1,0 +1,145 @@
+---
+title: "Figures"
+output: html_document
+---
+
+**Last updated:** `r Sys.Date()`
+
+**Code version:** `r git2r::commits()[[1]]@sha`
+
+```{r knitr, include=FALSE, cache=FALSE}
+library("knitr")
+opts_chunk$set(fig.path = "figure/")
+```
+
+## Setup
+
+```{r packages, message=FALSE, cache=FALSE}
+library("cowplot")
+library("ggplot2")
+library("qqman")
+library("readr")
+theme_set(theme_cowplot(font_size = 12))
+```
+
+## Figure 2
+
+```{r input-gwas, message=FALSE, cache=TRUE}
+tri <- read_tsv("../data/gwas/tri/gemma-tri.assoc.txt")
+neu <- read_tsv("../data/gwas/neu/gemma-neu.assoc.txt")
+ykl <- read_tsv("../data/gwas/ykl/gemma-ykl.assoc.txt")
+chi <- read_tsv("../data/gwas/chi/gemma-chi.assoc.txt")
+```
+
+```{r skyline-plot}
+sky <- function(x, alpha = 0.05, ...) {
+  require("qqman")
+  manhattan(x, chr = "chr", bp = "ps", p = "p_lrt", snp = "rs",
+            suggestiveline = FALSE, genomewideline = -log10(alpha / nrow(x)),
+            ...)
+}
+```
+
+```{r fig2, fig.width=10, fig.height=10}
+op <- par(mfrow = c(2, 2))
+sky(tri, main = "Triglycerides")
+sky(neu, main = "Neutrophil Count", ylim = c(0, 10))
+sky(ykl, main = "YKL-40", ylim = c(0, 50))
+sky(chi, main = "Chitinase 1 Activity")
+par(op)
+```
+
+## Figure 3
+
+Input eQTL results.
+
+```{r input-eqtl, message=FALSE, cache=TRUE}
+eqtl <- read_delim("../data/gemma/top-pca-0.txt", skip = 1, delim = "\t",
+                   col_names = FALSE)
+colnames(eqtl) <- c("gene", "chr", "rs", "ps", "n_miss",
+                    "allele1", "allele0", "af", "beta",
+                    "se", "l_remle", "l_mle", "p_wald",
+                    "p_lrt", "p_score", "n_snps", "n_pcs")
+```
+
+Bonferroni-correction per gene for number of _cis_-SNPs tested.
+
+```{r bonferroni}
+bonferroni <- function(p, n) {
+  # p - nominal p-value(s)
+  # n - number(s) of tests
+  stopifnot(is.numeric(p), p >= 0, p <= 1,
+            is.numeric(n), n > 0)
+  n_valid_len <- length(n) == 1 || length(n) == length(p)
+  if (!n_valid_len)
+    stop("n must be length 1 or the same length as p")
+  p_b <- pmin(1, p * n)
+  stopifnot(p_b <= 1)
+  return(p_b)
+}
+
+eqtl$p_bonf <- bonferroni(eqtl$p_lrt, eqtl$n_snps)
+```
+
+Benjamini-Hochberg correction across genes.
+
+```{r bh}
+eqtl$p_bh = p.adjust(eqtl$p_bonf, method = "BH")
+```
+
+QQ-plot.
+
+```{r fig3a}
+qq(eqtl$p_bh)
+```
+
+Input TSS locations.
+
+```{r input-tss, message=FALSE, cache=TRUE}
+tss <- read_tsv("../data/tss.txt", col_names = FALSE)
+colnames(tss) <- c("gene", "chr", "tss", "strand", "biotype")
+```
+
+Calculate distance between each eQTL and TSS.
+
+```{r eqtl-distance}
+eqtl_tss <- merge(eqtl, tss)
+eqtl_tss$dist <- ifelse(eqtl_tss$strand == "+",
+                        eqtl_tss$ps - eqtl_tss$tss,
+                        -(eqtl_tss$ps - eqtl_tss$tss))
+eqtl_tss$sig <- eqtl_tss$p_bh < 0.10
+```
+
+```{r fig3b}
+p_dist <- ggplot(eqtl_tss, aes(x = dist, color = sig)) +
+  geom_density() +
+  scale_x_continuous(name = "Distance from TSS (upstream <- -> downstream)",
+                     breaks = seq(-10^6, 10^6, by = 50 * 10^4),
+                     labels = c("-1 Mb", "-500 kb", "TSS", "+500 kb", "+1 Mb"),
+                     limits = c(-10^6, 10^6)) +
+  theme(axis.text.x = element_text(angle = -45, hjust = 0.5, vjust = 0.75),
+        legend.position = "top") +
+  scale_color_discrete(name = "", labels = c("non-eQTL", "eQTL at 10% FDR")) +
+  labs(y = "Density")
+p_dist
+```
+
+## Figure 4
+
+```{r fig4}
+eqtl_tss$sig <- factor(eqtl_tss$sig, levels = c(FALSE, TRUE),
+                       labels = c("non-eQTL", "eQTL at 10% FDR"))
+p_af <- ggplot(eqtl_tss, aes(x = af, fill = sig)) +
+  geom_histogram() +
+  facet_wrap(~sig,  scales = "free_y") +
+  labs(x = "Minor allele frequency", y = "Number of SNP-gene pairs") +
+  theme(legend.position = "none")
+p_af
+```
+
+## Session information
+
+```{r session-info}
+sessionInfo()
+```
+
