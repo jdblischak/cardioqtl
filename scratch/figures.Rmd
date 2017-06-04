@@ -42,10 +42,17 @@ sky <- function(x, alpha = 0.05, ...) {
 
 ```{r fig2, fig.width=10, fig.height=10}
 op <- par(mfrow = c(2, 2))
-sky(tri, main = "Triglycerides")
-sky(neu, main = "Neutrophil Count", ylim = c(0, 10))
-sky(ykl, main = "YKL-40", ylim = c(0, 50))
-sky(chi, main = "Chitinase 1 Activity")
+sky(tri, main = "Triglycerides",
+    highlight = c("rs6589677", "rs500254", "rs11217655", "rs11217695"))
+sky(neu, main = "Neutrophil Count", ylim = c(0, 10),
+    highlight = "rs12634993")
+sky(ykl, main = "YKL-40", ylim = c(0, 50),
+    highlight = c("rs1794867", "rs495198", "rs2819346", "rs2819349",
+    "rs10800812", "rs10920521", "rs6672643", "rs2153101", "rs2494282",
+    "rs4950936", "rs946258", "rs3820145", "rs1340237", "rs10128007",
+    "rs12079530", "rs35068223", "rs4550119", "rs79707006"))
+sky(chi, main = "Chitinase 1 Activity",
+    highlight = c("rs495198", "rs2486070"))
 par(op)
 ```
 
@@ -112,7 +119,7 @@ eqtl_tss$sig <- eqtl_tss$p_bh < 0.10
 
 ```{r fig3b}
 p_dist <- ggplot(eqtl_tss, aes(x = dist, color = sig)) +
-  geom_density() +
+  geom_line(stat="density") +
   scale_x_continuous(name = "Distance from TSS (upstream <- -> downstream)",
                      breaks = seq(-10^6, 10^6, by = 50 * 10^4),
                      labels = c("-1 Mb", "-500 kb", "TSS", "+500 kb", "+1 Mb"),
