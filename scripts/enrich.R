@@ -1,10 +1,12 @@
 # Are cardiomyocyte eQTLs enriched in signal from GWAS?
 
 library("cowplot")
+library("flux")
 library("ggplot2")
 library("Hmisc")
 library("magrittr")
-library("plyr")
+library("plyr"); library("dplyr")
+library("RColorBrewer")
 library("readr")
 library("stringr")
 theme_set(theme_cowplot())
@@ -166,15 +168,74 @@ p_heart <- ggplot(d_enrich[d_enrich$pheno %in% heart, ],
   geom_line() +
   geom_hline(yintercept = 1, linetype = "dashed") +
   scale_x_continuous(breaks = breaks, labels = labels) +
-  scale_color_discrete(name = NULL) +
+  ylim(min(d_enrich$enrichment),
+       max(d_enrich$enrichment)) +
+  scale_color_brewer(name = NULL, palette = "Reds") +
+  theme(legend.position = "none") +
   labs(x = "-log10 P cutoff for eQTL\n(Number of eQTLs)",
        y = "Fold enrichment of GWAS P < 0.05",
        title = "Cardiovascular traits")
 
 p_immune <- p_heart %+% d_enrich[d_enrich$pheno %in% immune, ] +
+  scale_color_brewer(name = NULL, palette = "Blues") +
   labs(title = "Immunological traits")
 
 p_lung <- p_heart %+% d_enrich[d_enrich$pheno %in% lung, ] +
+  scale_color_brewer(name = NULL, palette = "Purples") +
   labs(title = "Pulmonary traits")
 
-plot_grid(p_heart, p_immune, p_lung)
+plot_grid(p_heart +
+            annotate("text", x = rep(len + 1, length(heart)),
+                     y = d_enrich$enrichment[d_enrich$pheno %in% heart &
+                                             d_enrich$index == len],
+                     label = heart),
+          p_immune +
+            annotate("text", x = rep(len + 1, length(immune)),
+                     y = d_enrich$enrichment[d_enrich$pheno %in% immune &
+                                             d_enrich$index == len],
+                     label = immune),
+          p_lung +
+            annotate("text", x = rep(len + 1, length(lung)),
+                     y = d_enrich$enrichment[d_enrich$pheno %in% lung &
+                                             d_enrich$index == len],
+                     label = lung))
+
+# Calculate AUC ----------------------------------------------------------------
+
+background <- auc(x = 1:len, y = rep(1, len))
+d_auc <- d_enrich %>%
+  group_by(pheno) %>%
+  summarize(auc_raw = auc(x = index, y = enrichment),
+            auc_std = auc_raw - background,
+            enr_max = max(enrichment),
+            enr_final = enrichment[length(enrichment)])
+set1 <- brewer.pal(n = 4, "Set1")
+names(set1) <- c("red", "blue", "green", "purple")
+pheno_colors <- character(length = length(l_enrich))
+for (i in seq_along(pheno_colors)) {
+  if (names(l_enrich)[i] %in% heart) {
+    pheno_colors[i] <- set1["red"]
+  } else if (names(l_enrich)[i] %in% immune) {
+    pheno_colors[i] <- set1["blue"]
+  } else {
+    pheno_colors[i] <- set1["purple"]
+  }
+}
+
+p_auc <- ggplot(d_auc,
+       aes(x = reorder(pheno, auc_std), y = auc_std, fill = pheno)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = pheno_colors) +
+  theme(legend.position = "none") +
+  labs(x = "Trait", y = "Enrichment above background\n(area under the curve)")
+
+p_max <- p_auc %+% aes(x = reorder(pheno, enr_max), y = enr_max) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  labs(x = "Trait", y = "Maximum enrichment")
+
+p_final <- p_max %+% aes(x = reorder(pheno, enr_final), y = enr_final) +
+  labs(x = "Trait", y = "Final enrichment")
+
+plot_grid(p_auc + geom_hline(yintercept = 0, linetype = "dashed"),
+          p_max,
+          p_final)
