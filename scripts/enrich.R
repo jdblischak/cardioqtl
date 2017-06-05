@@ -1,7 +1,13 @@
 # Are cardiomyocyte eQTLs enriched in signal from GWAS?
 
+library("cowplot")
+library("ggplot2")
 library("Hmisc")
+library("magrittr")
+library("plyr")
 library("readr")
+library("stringr")
+theme_set(theme_cowplot())
 
 # Functions --------------------------------------------------------------------
 
@@ -78,10 +84,6 @@ bonferroni <- function(p, n) {
 
 # Data -------------------------------------------------------------------------
 
-tri <- read_tsv("../data/gwas/tri/gemma-tri.assoc.txt")
-neu <- read_tsv("../data/gwas/neu/gemma-neu.assoc.txt")
-ykl <- read_tsv("../data/gwas/ykl/gemma-ykl.assoc.txt")
-chi <- read_tsv("../data/gwas/chi/gemma-chi.assoc.txt")
 
 eqtl <- read_delim("../data/gemma/top-pca-0.txt", skip = 1, delim = "\t",
                    col_names = FALSE)
@@ -94,56 +96,85 @@ colnames(eqtl) <- c("gene", "chr", "rs", "ps", "n_miss",
 eqtl$p_bonf <- bonferroni(eqtl$p_lrt, eqtl$n_snps)
 eqtl$p_bh = p.adjust(eqtl$p_bonf, method = "BH")
 
+f_gwas <- Sys.glob("../data/gwas/*/gemma-*.assoc.txt")
+eqtl_gwas <- eqtl
+for (f in f_gwas) {
+  n <- f %>% basename %>%
+    str_replace("gemma-", "") %>%
+    str_replace(".assoc.txt", "")
+  d <- read_tsv(f)
+  p <- d$p_lrt
+  names(p) <- d$rs
+  eqtl_gwas <- cbind(eqtl_gwas, p[eqtl_gwas$rs])
+  colnames(eqtl_gwas)[ncol(eqtl_gwas)] <- n
+}
+
+eqtl_gwas_final <- na.omit(eqtl_gwas)
+
 # Enrichment--------------------------------------------------------------------
 
-eqtl_tri <- merge(eqtl, tri,
-                  by = c("chr", "rs", "ps", "allele1", "allele0"),
-                  suffixes = c(".eqtl", ".tri"))
+l_enrich <- list()
+for (i in 20:39) {
+  n <- colnames(eqtl_gwas_final)[i]
+  l_enrich[[n]] <- enrich(x = -log10(eqtl_gwas_final$p_lrt),
+                          y = eqtl_gwas_final[, i],
+                          cutoff = 0.05,
+                          m = 100,
+                          x_direction = "greater",
+                          cutoff_direction = "lesser")
+  plot_enrich(l_enrich[[n]], main = n, ylim = c(0, 2))
+}
 
-tri_enrich <- enrich(x = eqtl_tri$p_lrt.eqtl,
-                     y = eqtl_tri$p_lrt.tri,
-                     cutoff = 0.05,
-                     m = 100,
-                     x_direction = "lesser",
-                     cutoff_direction = "lesser")
+# Plot with base ---------------------------------------------------------------
 
-plot_enrich(tri_enrich, main = "tri")
+heart <- c("cho", "cim", "dbp", "hdl", "lav", "ldl", "lvm", "sbp", "tri")
+immune <- c("chi", "eos", "ige", "lym", "mon", "neu", "ykl")
+lung <- c("bri", "eno", "fev", "fvc")
+stopifnot(length(c(heart, immune, lung)) == 20)
 
-eqtl_neu <- merge(eqtl, neu,
-                  by = c("chr", "rs", "ps", "allele1", "allele0"),
-                  suffixes = c(".eqtl", ".neu"))
+# Heart
+plot_enrich(l_enrich[[heart[1]]], ylim = c(0, 2), main = "Cardiovascular")
+for (pheno in heart[-1]) {
+  lines(l_enrich[[pheno]]$enrichment)
+}
 
-neu_enrich <- enrich(x = eqtl_neu$p_lrt.eqtl,
-            y = eqtl_neu$p_lrt.neu,
-            cutoff = 0.05,
-            m = 100,
-            x_direction = "lesser",
-            cutoff_direction = "lesser")
+# Immune
+plot_enrich(l_enrich[[immune[1]]], ylim = c(0, 2), main = "Immunological")
+for (pheno in immune[-1]) {
+  lines(l_enrich[[pheno]]$enrichment)
+}
 
-plot_enrich(neu_enrich, main = "neu")
+# Lung
+plot_enrich(l_enrich[[lung[1]]], ylim = c(0, 2), main = "Pulmonary")
+for (pheno in lung[-1]) {
+  lines(l_enrich[[pheno]]$enrichment)
+}
 
-eqtl_ykl <- merge(eqtl, ykl,
-                  by = c("chr", "rs", "ps", "allele1", "allele0"),
-                  suffixes = c(".eqtl", ".ykl"))
+# Plot with ggplot2 ------------------------------------------------------------
 
-ykl_enrich <- enrich(x = eqtl_ykl$p_lrt.eqtl,
-                     y = eqtl_ykl$p_lrt.ykl,
-                     cutoff = 0.05,
-                     m = 100,
-                     x_direction = "lesser",
-                     cutoff_direction = "lesser")
+d_enrich <- ldply(l_enrich, .id = "pheno")
+# Remove NaN for final bin with zero eQTLs
+d_enrich <- d_enrich[!is.nan(d_enrich$enrichment), ]
+len <- sum(d_enrich$pheno == "bri")
+d_enrich$index <- seq(len)
+d_enrich$label <- sprintf("%.2f\n(%d)", d_enrich$intervals, d_enrich$sizes)
+breaks <- seq(1, len, length.out = 10)
+labels <- d_enrich$label[d_enrich$pheno == "bri"][breaks]
 
-plot_enrich(ykl_enrich, main = "ykl")
+p_heart <- ggplot(d_enrich[d_enrich$pheno %in% heart, ],
+                  aes(x = index, y = enrichment, color = pheno)) +
+  geom_line() +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  scale_x_continuous(breaks = breaks, labels = labels) +
+  scale_color_discrete(name = NULL) +
+  labs(x = "-log10 P cutoff for eQTL\n(Number of eQTLs)",
+       y = "Fold enrichment of GWAS P < 0.05",
+       title = "Cardiovascular traits")
 
-eqtl_chi <- merge(eqtl, chi,
-                  by = c("chr", "rs", "ps", "allele1", "allele0"),
-                  suffixes = c(".eqtl", ".chi"))
+p_immune <- p_heart %+% d_enrich[d_enrich$pheno %in% immune, ] +
+  labs(title = "Immunological traits")
 
-chi_enrich <- enrich(x = eqtl_chi$p_lrt.eqtl,
-                     y = eqtl_chi$p_lrt.chi,
-                     cutoff = 0.05,
-                     m = 100,
-                     x_direction = "lesser",
-                     cutoff_direction = "lesser")
+p_lung <- p_heart %+% d_enrich[d_enrich$pheno %in% lung, ] +
+  labs(title = "Pulmonary traits")
 
-plot_enrich(chi_enrich, main = "chi")
+plot_grid(p_heart, p_immune, p_lung)

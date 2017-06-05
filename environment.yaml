@@ -31,6 +31,7 @@ dependencies:
   - r-dplyr=0.5.0
   - r-ggplot2=2.2.1
   - r-git2r=0.15.0
+  - r-hmisc=3.17_4
   - r-knitr=1.12.3
   - r-magrittr=1.5
   - r-plyr=1.8.4
