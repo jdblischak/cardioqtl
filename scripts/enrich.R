@@ -9,7 +9,7 @@ library("plyr"); library("dplyr")
 library("RColorBrewer")
 library("readr")
 library("stringr")
-theme_set(theme_cowplot())
+theme_set(theme_cowplot(font_size = 10))
 
 # Functions --------------------------------------------------------------------
 
@@ -113,6 +113,8 @@ for (f in f_gwas) {
 
 eqtl_gwas_final <- na.omit(eqtl_gwas)
 
+atac <- read_tsv("../data/atac/intersect.txt")
+
 # Enrichment--------------------------------------------------------------------
 
 l_enrich <- list()
@@ -198,7 +200,9 @@ plot_grid(p_heart +
             annotate("text", x = rep(len + 1, length(lung)),
                      y = d_enrich$enrichment[d_enrich$pheno %in% lung &
                                              d_enrich$index == len],
-                     label = lung))
+                     label = lung),
+          nrow = 1, labels = LETTERS[1:3])
+ggsave("enrich-phenos.png", width = 18, height = 6)
 
 # Calculate AUC ----------------------------------------------------------------
 
@@ -238,4 +242,77 @@ p_final <- p_max %+% aes(x = reorder(pheno, enr_final), y = enr_final) +
 
 plot_grid(p_auc + geom_hline(yintercept = 0, linetype = "dashed"),
           p_max,
-          p_final)
+          p_final,
+          nrow = 1, labels = LETTERS[1:3])
+ggsave("enrich-phenos-auc.png", width = 18, height = 6)
+
+# Enrichment of ATAC-seq peaks -------------------------------------------------
+
+eqtl_atac <- merge(eqtl, atac, by = "rs", all.x = TRUE)
+stopifnot(nrow(eqtl_atac) == nrow(eqtl))
+# Convert NA to 0
+for (cell in c("cm", "ips", "lcl")) {
+  eqtl_atac[, cell] <- ifelse(is.na(eqtl_atac[, cell]),
+                              0, eqtl_atac[, cell])
+}
+sum(eqtl_atac$cm)
+sum(eqtl_atac$ips)
+sum(eqtl_atac$lcl)
+
+l_enrich_atac <- list()
+for (i in 20:22) {
+  n <- colnames(eqtl_atac)[i]
+  l_enrich_atac[[n]] <- enrich(x = -log10(eqtl_atac$p_lrt),
+                          y = eqtl_atac[, i],
+                          cutoff = 0.5, # Just a hack to differentiate between
+                          m = 100,      # 1 and 0 (i.e. presence or absence)
+                          x_direction = "greater",
+                          cutoff_direction = "greater")
+  plot_enrich(l_enrich_atac[[n]], main = n, ylim = c(0, 2))
+}
+
+d_enrich_atac <- ldply(l_enrich_atac, .id = "cell")
+# Remove NaN for final bin with zero eQTLs
+d_enrich_atac <- d_enrich_atac[!is.nan(d_enrich_atac$enrichment), ]
+len <- sum(d_enrich_atac$cell == "cm")
+d_enrich_atac$index <- seq(len)
+d_enrich_atac$label <- sprintf("%.2f\n(%d)", d_enrich_atac$intervals, d_enrich_atac$sizes)
+breaks <- seq(1, len, length.out = 10)
+labels <- d_enrich_atac$label[d_enrich_atac$cell == "cm"][breaks]
+
+cell_colors <- set1[c("red", "green", "blue")]
+# ggplot2 doesn't accept manual color vectors with a names attribute
+names(cell_colors) <- NULL
+
+p_atac <- ggplot(d_enrich_atac,
+                  aes(x = index, y = enrichment, color = cell)) +
+  geom_line() +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  scale_x_continuous(breaks = breaks, labels = labels) +
+  ylim(min(d_enrich_atac$enrichment),
+       max(d_enrich_atac$enrichment)) +
+  scale_color_manual(name = "Cell type", values = cell_colors,
+                     labels = c("CM", "iPSC", "LCL")) +
+  labs(x = "-log10 P cutoff for eQTL\n(Number of eQTLs)",
+       y = "Fold enrichment of eQTLs in ATAC-seq peaks",
+       title = "Enrichment of eQTLs in open chromatin")
+
+# Calculate AUC
+background_atac <- auc(x = 1:len, y = rep(1, len))
+d_auc_atac <- d_enrich_atac %>%
+  group_by(cell) %>%
+  summarize(auc_raw = auc(x = index, y = enrichment),
+            auc_std = auc_raw - background_atac,
+            enr_max = max(enrichment),
+            enr_final = enrichment[length(enrichment)])
+
+d_auc_atac$cell <- factor(d_auc_atac$cell, levels = c("cm", "ips", "lcl"),
+                          labels = c("CM", "iPSC", "LCL"))
+p_auc_atac <- p_auc %+% d_auc_atac %+%
+  aes(x = reorder(cell, auc_std), fill = cell) +
+  scale_fill_manual(values = cell_colors) +
+  labs(x = "Cell type",
+       title = "Quantification of enrichment of eQTLs in ATAC-seq peaks")
+
+plot_grid(p_atac, p_auc_atac, labels = LETTERS[1:2])
+ggsave("enrich-atac.png", width = 12, height = 6)
