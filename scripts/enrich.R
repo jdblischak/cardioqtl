@@ -129,6 +129,23 @@ for (i in 20:39) {
   plot_enrich(l_enrich[[n]], main = n, ylim = c(0, 2))
 }
 
+# 1000 permutations of a GWAS data set
+set.seed(12345)
+perms <- 100
+l_permute <- vector(mode = "list", length = perms)
+# All the GWAS p-values are uniformly distributed, so it shouldn't matter which
+# one I permute.
+for (i in 1:perms) {
+  l_permute[[i]] <- enrich(x = -log10(eqtl_gwas_final$p_lrt),
+                           y = sample(eqtl_gwas_final[, "bri"]),
+                           cutoff = 0.05,
+                           m = 100,
+                           x_direction = "greater",
+                           cutoff_direction = "lesser")
+  if (i %% 10 == 0)
+    plot_enrich(l_permute[[i]], main = i, ylim = c(0, 2))
+}
+
 # Plot with base ---------------------------------------------------------------
 
 heart <- c("cho", "cim", "dbp", "hdl", "lav", "ldl", "lvm", "sbp", "tri")
@@ -154,6 +171,12 @@ for (pheno in lung[-1]) {
   lines(l_enrich[[pheno]]$enrichment)
 }
 
+# Permutations
+plot_enrich(l_permute[[1]], ylim = c(0, 3), main = "Permutations")
+for (i in 2:perms) {
+  lines(l_permute[[i]]$enrichment)
+}
+
 # Plot with ggplot2 ------------------------------------------------------------
 
 d_enrich <- ldply(l_enrich, .id = "pheno")
@@ -165,6 +188,19 @@ d_enrich$label <- sprintf("%.2f\n(%d)", d_enrich$intervals, d_enrich$sizes)
 breaks <- seq(1, len, length.out = 10)
 labels <- d_enrich$label[d_enrich$pheno == "bri"][breaks]
 
+# Calculate 95% confidence intervals based on the permutations
+names(l_permute) <- paste0("perm", 1:perms)
+d_permute <- ldply(l_permute, .id = "permutation")
+# Remove NaN for final bin with zero eQTLs
+d_permute <- d_permute[!is.nan(d_permute$enrichment), ]
+len_permute <- sum(d_permute$permutation == "perm1")
+stopifnot(len_permute == len)
+d_permute$index <- seq(len_permute)
+d_permute_ci <- d_permute %>%
+  group_by(index) %>%
+  summarize(lower_bound = quantile(enrichment, 0.05),
+            upper_bound = quantile(enrichment, 0.95))
+
 p_heart <- ggplot(d_enrich[d_enrich$pheno %in% heart, ],
                   aes(x = index, y = enrichment, color = pheno)) +
   geom_line() +
@@ -173,6 +209,12 @@ p_heart <- ggplot(d_enrich[d_enrich$pheno %in% heart, ],
   ylim(min(d_enrich$enrichment),
        max(d_enrich$enrichment)) +
   scale_color_brewer(name = NULL, palette = "Reds") +
+  geom_line(mapping = aes(x = index, y = lower_bound),
+            data = d_permute_ci,
+            col = "black", linetype = "dashed", size = 1.25) +
+  geom_line(mapping = aes(x = index, y = upper_bound),
+            data = d_permute_ci,
+            col = "black", linetype = "dashed", size = 1.25) +
   theme(legend.position = "none") +
   labs(x = "-log10 P cutoff for eQTL\n(Number of eQTLs)",
        y = "Fold enrichment of GWAS P < 0.05",
@@ -226,6 +268,16 @@ for (i in seq_along(pheno_colors)) {
   }
 }
 
+d_permute_auc <- d_permute %>%
+  group_by(permutation) %>%
+  summarize(auc_raw = auc(x = index, y = enrichment),
+            auc_std = auc_raw - background,
+            enr_max = max(enrichment),
+            enr_final = enrichment[length(enrichment)])
+boxplot(d_permute_auc$auc_std)
+lapply(d_auc$auc_std, points, col = "red", pch = 19)
+quantile(d_permute_auc$auc_std, probs = c(0.05, 0.95))
+
 p_auc <- ggplot(d_auc,
        aes(x = reorder(pheno, auc_std), y = auc_std, fill = pheno)) +
   geom_bar(stat = "identity") +
@@ -274,15 +326,43 @@ for (i in 20:22) {
 d_enrich_atac <- ldply(l_enrich_atac, .id = "cell")
 # Remove NaN for final bin with zero eQTLs
 d_enrich_atac <- d_enrich_atac[!is.nan(d_enrich_atac$enrichment), ]
-len <- sum(d_enrich_atac$cell == "cm")
-d_enrich_atac$index <- seq(len)
+len_atac <- sum(d_enrich_atac$cell == "cm")
+d_enrich_atac$index <- seq(len_atac)
 d_enrich_atac$label <- sprintf("%.2f\n(%d)", d_enrich_atac$intervals, d_enrich_atac$sizes)
-breaks <- seq(1, len, length.out = 10)
+breaks <- seq(1, len_atac, length.out = 10)
 labels <- d_enrich_atac$label[d_enrich_atac$cell == "cm"][breaks]
 
 cell_colors <- set1[c("red", "green", "blue")]
 # ggplot2 doesn't accept manual color vectors with a names attribute
 names(cell_colors) <- NULL
+
+# Calculate permutations for ATAC
+set.seed(12345)
+perms_atac <- 100
+l_permute_atac <- vector(mode = "list", length = perms_atac)
+for (i in 1:perms_atac) {
+  l_permute_atac[[i]] <- enrich(x = -log10(eqtl_atac$p_lrt),
+                                y = sample(eqtl_atac[, "cm"]),
+                                cutoff = 0.5, # Just a hack to differentiate between
+                                m = 100,      # 1 and 0 (i.e. presence or absence)
+                                x_direction = "greater",
+                                cutoff_direction = "greater")
+  if (i %% 10 == 0)
+    plot_enrich(l_permute_atac[[i]], main = i, ylim = c(0, 2))
+}
+
+# Calculate 95% confidence intervals based on the permutations
+names(l_permute_atac) <- paste0("perm", 1:perms)
+d_permute_atac <- ldply(l_permute_atac, .id = "permutation")
+# Remove NaN for final bin with zero eQTLs
+d_permute_atac <- d_permute_atac[!is.nan(d_permute_atac$enrichment), ]
+len_permute_atac <- sum(d_permute_atac$permutation == "perm1")
+stopifnot(len_permute_atac == len_atac)
+d_permute_atac$index <- seq(len_permute_atac)
+d_permute_atac_ci <- d_permute_atac %>%
+  group_by(index) %>%
+  summarize(lower_bound = quantile(enrichment, 0.05),
+            upper_bound = quantile(enrichment, 0.95))
 
 p_atac <- ggplot(d_enrich_atac,
                   aes(x = index, y = enrichment, color = cell)) +
@@ -293,18 +373,34 @@ p_atac <- ggplot(d_enrich_atac,
        max(d_enrich_atac$enrichment)) +
   scale_color_manual(name = "Cell type", values = cell_colors,
                      labels = c("CM", "iPSC", "LCL")) +
+  geom_line(mapping = aes(x = index, y = lower_bound),
+            data = d_permute_atac_ci,
+            col = "black", linetype = "dashed", size = 1.25) +
+  geom_line(mapping = aes(x = index, y = upper_bound),
+            data = d_permute_atac_ci,
+            col = "black", linetype = "dashed", size = 1.25) +
   labs(x = "-log10 P cutoff for eQTL\n(Number of eQTLs)",
        y = "Fold enrichment of eQTLs in ATAC-seq peaks",
        title = "Enrichment of eQTLs in open chromatin")
 
 # Calculate AUC
-background_atac <- auc(x = 1:len, y = rep(1, len))
+background_atac <- auc(x = 1:len_atac, y = rep(1, len_atac))
 d_auc_atac <- d_enrich_atac %>%
   group_by(cell) %>%
   summarize(auc_raw = auc(x = index, y = enrichment),
             auc_std = auc_raw - background_atac,
             enr_max = max(enrichment),
             enr_final = enrichment[length(enrichment)])
+# Calculate AUC of ATAC permutations
+d_permute_atac_auc <- d_permute_atac %>%
+  group_by(permutation) %>%
+  summarize(auc_raw = auc(x = index, y = enrichment),
+            auc_std = auc_raw - background,
+            enr_max = max(enrichment),
+            enr_final = enrichment[length(enrichment)])
+boxplot(d_permute_atac_auc$auc_std)
+lapply(d_auc_atac$auc_std, points, col = "red", pch = 19)
+quantile(d_permute_atac_auc$auc_std, probs = c(0.05, 0.95))
 
 d_auc_atac$cell <- factor(d_auc_atac$cell, levels = c("cm", "ips", "lcl"),
                           labels = c("CM", "iPSC", "LCL"))
