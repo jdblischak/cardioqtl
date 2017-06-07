@@ -6,18 +6,20 @@ output: word_document
 
 ```{r knitr, include=FALSE, cache=FALSE}
 library("knitr")
-opts_chunk$set(echo = FALSE, message = FALSE, fig.path = "figure/")
+opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+               fig.path = "figure/")
 library("cowplot")
+library("flux")
 library("ggplot2")
+library("plyr"); library("dplyr")
 library("qqman")
+library("RColorBrewer")
 library("readr")
 library("stringr")
 theme_set(theme_cowplot(font_size = 12))
 ```
 
 With the induced pluripotent stem cells (iPSCs) we have developed in the lab, we are no longer limited to using immortalized cell lines or frozen tissues, but can instead perform dynamic experiments in clinically-relevant cell types isolated from many different individuals. These experiments will enable us to decipher the contribution of genetic variation to diverse phenotypes. One such model we are currently developing is iPSC-derived cardiomyocytes to study cardiovascular traits.
-
-
 
 ```{r eqtl}
 eqtl <- read_delim("../data/gemma/top-pca-0.txt", skip = 1, delim = "\t",
@@ -53,8 +55,6 @@ p_qq <- ggplot(d_qq, aes(x = e, y = o)) +
        y = expression(Observed ~ ~-log[10](italic(p))))
 ```
 
-To establish this cellular model to study the genetics of heart biology, we have initially performed expression quantitiative trait loci (eQTL) mapping in these cells. Specifically, we reprogrammed immortalized lymphoblastoid cell lines (LCLs) from 43 densely-genotyped individuals into iPSCs and subsequently differentiated the iPSCs to cardiomyocytes. We measured gene expression using RNA-seq. For each gene, we tested all SNPs within 1 megabase (MB) of the transcription start site (TSS) for an additive effect on gene expression using a likelihood ratio test implemented in the statistical software GEMMA (Zhou and Stephens, 2012). To control for multiple testing, we first applied a Bonferroni correction to account for the number of SNPs tested per gene. Second, after assigning the top eQTL to each gene, we used the Benjamini-Hochberg false discovery rate (FDR) procedure to control for the total number of genes tested for an eQTL. Of the `r nrow(eqtl)` Ensembl genes tested, `r sum(eqtl$p_bh < 0.10)` had a statistically significant eQTL effect.
-
 ```{r tss}
 # Input TSS locations.
 tss <- read_tsv("../data/tss.txt", col_names = FALSE)
@@ -72,7 +72,7 @@ p_dist <- ggplot(eqtl_tss, aes(x = dist, color = sig)) +
                      labels = c("-1 Mb", "-500 kb", "TSS", "+500 kb", "+1 Mb"),
                      limits = c(-10^6, 10^6)) +
   theme(axis.text.x = element_text(angle = -45, hjust = 0.5, vjust = 0.75),
-        legend.position = "top") +
+        legend.position = "bottom") +
   scale_color_discrete(name = "", labels = c("non-eQTL", "eQTL at 10% FDR")) +
   labs(y = "Density")
 ```
@@ -113,7 +113,209 @@ p_ex <- ggplot(d_ex, aes(x = g, y = e)) +
        y = sprintf("Gene expression\nof %s", top_eqtl$gene))
 ```
 
-```{r fig-eqtl, fig.width=9, fig.height=3, fig.cap="Figure 1. eQTL analysis."}
+To establish this cellular model to study the genetics of heart biology, we have initially performed expression quantitative trait loci (eQTL) mapping in these cells. Specifically, we reprogrammed immortalized lymphoblastoid cell lines (LCLs) from 43 densely-genotyped individuals into iPSCs and subsequently differentiated the iPSCs to cardiomyocytes. We measured gene expression using RNA-seq. For each gene, we tested all SNPs within 1 megabase (MB) of the transcription start site (TSS) for an additive effect on gene expression using a likelihood ratio test implemented in the statistical software GEMMA (Zhou and Stephens, 2012). To control for multiple testing, we first applied a Bonferroni correction to account for the number of SNPs tested per gene. Second, after assigning the top eQTL to each gene, we used the Benjamini-Hochberg false discovery rate (FDR) procedure to control for the total number of genes tested for an eQTL. Of the `r format(nrow(eqtl), big.mark = ",")` Ensembl genes tested, `r sum(eqtl$p_bh < 0.10)` had a statistically significant eQTL effect (Fig. 1A). Reassuringly, the eQTLs we detected were located close to the TSS of their associated gene, as expected from past eQTL studies (Veyrieras et al., 2008) (Fig. 1B). As an example, the most significant association was between SNP `r top_eqtl$rs` and the gene RPL9 (`r top_eqtl$gene`) (Fig. 1C).
+
+```{r fig-eqtl-caption}
+fig1_cap <-
+  "**Figure 1. eQTL analysis.** **A)** A quantile-quantile (QQ) plot of the
+  Benjamini-Hochberg adjusted p-values for each eQTL-gene pair. **B)** The
+  density of the locations of the eQTLs relative to the transcription start
+  site (TSS) for both significant and non-significant eQTLs. **C)** An example
+  eQTL where increasing copies of the G allele at SNP rs2608828 was associated
+  with increasing expression levels of the gene RPL9 (ENSG00000163682)."
+```
+
+```{r fig-eqtl, fig.align="center", fig.width=9, fig.height=3, fig.cap=fig1_cap}
 plot_grid(p_qq, p_dist, p_ex, nrow = 1, labels = LETTERS[1:3])
 ```
 
+```{r atac}
+atac <- read_tsv("../data/atac/intersect.txt")
+eqtl_atac <- merge(eqtl, atac, by = "rs", all.x = TRUE)
+stopifnot(nrow(eqtl_atac) == nrow(eqtl))
+# Convert NA to 0
+for (cell in c("cm", "ips", "lcl")) {
+  eqtl_atac[, cell] <- ifelse(is.na(eqtl_atac[, cell]),
+                              0, eqtl_atac[, cell])
+}
+
+#' Main enrichment function.
+#'
+#' For each interval, calculate the enrichment compared to the background
+#' enrichment.
+#'
+#' x - the variable that is split into intervals
+#'
+#' y - the variable that is being tested for enrichment
+#'
+#' cutoff - the value of y at which to separate genes when cacluting enrichment
+#'
+#' m - the average number of genes in each interval
+#'
+#' x_direction - With increasing values of x, should genes be included if they
+#' are greater than or less than the metric that defines that interval. Default
+#' "greater", anything else with do "lesser".
+#'
+#' cutoff_direction - When testing for enrichment of y at the given interval of
+#' x, are genes counted if they are greater or lesser than the cuottf.
+#'
+#' @export
+enrich <- function(x, y, cutoff, m = 50,
+                   x_direction = "greater",
+                   cutoff_direction = "greater") {
+  intervals <- Hmisc::cut2(x, m = m, onlycuts = TRUE)
+  enrichment <- numeric(length = length(intervals))
+  sizes <- numeric(length = length(intervals))
+  if (cutoff_direction == "greater") {
+    background_enrich <- sum(y > cutoff) / length(y)
+  } else {
+    background_enrich <- sum(y < cutoff) / length(y)
+  }
+  for (i in seq_along(intervals)) {
+    if (x_direction == "greater") {
+      y_sub <- y[x > intervals[i]]
+    } else {
+      y_sub <- y[x < intervals[i]]
+    }
+    sizes[i] <- length(y_sub)
+    # browser()
+    if (cutoff_direction == "greater") {
+      enrichment[i] <- sum(y_sub > cutoff) / sizes[i] / background_enrich
+    } else {
+      enrichment[i] <- sum(y_sub < cutoff) / sizes[i] / background_enrich
+    }
+  }
+  return(data.frame(enrichment = enrichment, intervals = intervals, sizes = sizes))
+}
+
+l_enrich_atac <- list()
+for (i in 20:22) {
+  n <- colnames(eqtl_atac)[i]
+  l_enrich_atac[[n]] <- enrich(x = -log10(eqtl_atac$p_lrt),
+                          y = eqtl_atac[, i],
+                          cutoff = 0.5, # Just a hack to differentiate between
+                          m = 100,      # 1 and 0 (i.e. presence or absence)
+                          x_direction = "greater",
+                          cutoff_direction = "greater")
+}
+
+d_enrich_atac <- ldply(l_enrich_atac, .id = "cell")
+# Remove NaN for final bin with zero eQTLs
+d_enrich_atac <- d_enrich_atac[!is.nan(d_enrich_atac$enrichment), ]
+len_atac <- sum(d_enrich_atac$cell == "cm")
+d_enrich_atac$index <- seq(len_atac)
+d_enrich_atac$label <- sprintf("%.2f\n(%d)", d_enrich_atac$intervals, d_enrich_atac$sizes)
+breaks <- seq(1, len_atac, length.out = 10)
+labels <- d_enrich_atac$label[d_enrich_atac$cell == "cm"][breaks]
+
+set1 <- brewer.pal(n = 4, "Set1")
+names(set1) <- c("red", "blue", "green", "purple")
+cell_colors <- set1[c("red", "green", "blue")]
+# ggplot2 doesn't accept manual color vectors with a names attribute
+names(cell_colors) <- NULL
+
+# Calculate permutations for ATAC
+set.seed(12345)
+perms_atac <- 100
+l_permute_atac <- vector(mode = "list", length = perms_atac)
+for (i in 1:perms_atac) {
+  l_permute_atac[[i]] <- enrich(x = -log10(eqtl_atac$p_lrt),
+                                y = sample(eqtl_atac[, "cm"]),
+                                cutoff = 0.5, # Just a hack to differentiate between
+                                m = 100,      # 1 and 0 (i.e. presence or absence)
+                                x_direction = "greater",
+                                cutoff_direction = "greater")
+}
+
+# Calculate 95% confidence intervals based on the permutations
+names(l_permute_atac) <- paste0("perm", 1:perms_atac)
+d_permute_atac <- ldply(l_permute_atac, .id = "permutation")
+# Remove NaN for final bin with zero eQTLs
+d_permute_atac <- d_permute_atac[!is.nan(d_permute_atac$enrichment), ]
+len_permute_atac <- sum(d_permute_atac$permutation == "perm1")
+stopifnot(len_permute_atac == len_atac)
+d_permute_atac$index <- seq(len_permute_atac)
+d_permute_atac_ci <- d_permute_atac %>%
+  group_by(index) %>%
+  summarize(lower_bound = quantile(enrichment, 0.05),
+            upper_bound = quantile(enrichment, 0.95))
+
+p_atac <- ggplot(d_enrich_atac,
+                  aes(x = index, y = enrichment, color = cell)) +
+  geom_line() +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  scale_x_continuous(breaks = breaks, labels = labels) +
+  ylim(min(d_enrich_atac$enrichment),
+       max(d_enrich_atac$enrichment)) +
+  scale_color_manual(name = "Cell type", values = cell_colors,
+                     labels = c("CM", "iPSC", "LCL")) +
+  geom_line(mapping = aes(x = index, y = lower_bound),
+            data = d_permute_atac_ci,
+            col = "black", linetype = "dashed") +
+  geom_line(mapping = aes(x = index, y = upper_bound),
+            data = d_permute_atac_ci,
+            col = "black", linetype = "dashed") +
+  theme(legend.position = c(0.25, 0.75)) +
+  labs(x = "-log10 P cutoff for eQTL\n(Number of eQTLs)",
+       y = "Fold enrichment of eQTLs\nin ATAC-seq peaks",
+       title = "Enrichment of eQTLs in open chromatin")
+
+# Calculate AUC
+background_atac <- auc(x = 1:len_atac, y = rep(1, len_atac))
+d_auc_atac <- d_enrich_atac %>%
+  group_by(cell) %>%
+  summarize(auc_raw = auc(x = index, y = enrichment),
+            auc_std = auc_raw - background_atac,
+            enr_max = max(enrichment),
+            enr_final = enrichment[length(enrichment)])
+# Calculate AUC of ATAC permutations
+d_permute_atac_auc <- d_permute_atac %>%
+  group_by(permutation) %>%
+  summarize(auc_raw = auc(x = index, y = enrichment),
+            auc_std = auc_raw - background_atac,
+            enr_max = max(enrichment),
+            enr_final = enrichment[length(enrichment)])
+# quantile(d_permute_atac_auc$auc_std, probs = c(0.05, 0.95))
+
+d_auc_atac$cell <- factor(d_auc_atac$cell, levels = c("cm", "ips", "lcl"),
+                          labels = c("CM", "iPSC", "LCL"))
+p_auc_atac <- ggplot(d_permute_atac_auc,
+                     aes(x = "", y = auc_std)) +
+  geom_boxplot() +
+  geom_point(data = d_auc_atac,
+             mapping = aes(x = "", y = auc_std, color = cell),
+             size = 3) +
+  geom_text(data = d_auc_atac,
+            mapping = aes(x = "", y = auc_std, color = cell, label = cell), nudge_x = 0.15) +
+  scale_color_manual(name = "Cell type", values = cell_colors) +
+  theme(legend.position = "none") +
+  labs(x = "",
+       y = "Enrichment above background\n(area under the curve)",
+       title = "Quantification of enrichment")
+```
+
+To further confirm that our _in vitro_ model of cardiomyocytes allows us to interrogate cardiomyocyte-specific function, we intersected our eQTL results with publicly available ATAC-seq data collected from cardiomyocytes, iPSCs, and LCLs (Banovich et al., 2016). ATAC-seq assays regions of open chromatin, and thus peaks of ATAC-seq signal are putative regulatory regions. Therefore we'd expect that eQTLs identified in cardiomyocytes would be more likely to be located in putative regulatory regions in cardiomyocytes compared to other cell types. We empirically tested this assumption by determining which eQTLs were located in ATAC-seq peaks from each of the three cell types and quantifying the enrichment of eQTLs in ATAC-seq peaks with increasingly stringent p-value cutoffs to be classified as an eQTL (Fig. 2A). To quantify the enrichment, we calculated the area under the curve (AUC) for each of the three cell types and subtracted the null expectation of y = 1. To assess the statistical significance of the enrichments, we performed 100 permutations in which the eQTLs were randomly assigned to ATAC-seq peaks. Using this permutation-based approach, the eQTLs identified in the cardiomyocytes were most enriched in ATAC-seq peaks from the cardiomyocytes (Fig. 2B). However, the enrichment was statistically significant for both the cardiomyocytes and the iPSCs (empirical _P_ < 0.01).
+
+```{r fig-atac-caption}
+fig2_cap <-
+"**Figure 2. Enrichment of cardiomyocyte eQTLs in ATAC-seq peaks.** Open
+chromatin regions were identified in cardiomyocytes (CM), induced pluripotent
+stem cells (iPSC), and immortalized lymphoblastoid cell lines (LCL) using
+ATAC-seq (Banovich et al., 2016). **A)** The 14,494 eQTLs measured in
+cardiomyocytes (each gene was assigned its most significant cis-eQTL) were
+categorized by whether or not they were located within open chromatin (i.e. an
+ATAC-seq peak) in each of the three cell types. The x-axis shows the
+increasing –log~10~ _P_ that was used as a cutoff for each bin, with the number
+of eQTLs in parentheses. The y-axis shows the fold enrichment of eQTLs in that
+bin that were located in open chromatin over the background of all eQTLs
+located in open chromatin in that cell type. The dashed black lines indicate
+the empirically-derived 95% confidence intervals from 100 permutations. **B)**
+The enrichment plots in A) were quantified by calculating the area under the
+curve (AUC) relative to the null expectation of y = 1. The boxplot represents
+the AUC values from the 100 permulations. Cardiomyoctye eQTLs were most
+enriched in ATAC-seq peaks identified in cardiomyoctyes."
+```
+
+```{r fig-atac, fig.align="center", fig.width=9, fig.height=5, fig.cap=fig2_cap}
+plot_grid(p_atac, p_auc_atac, labels = LETTERS[1:2], rel_widths = c(2, 1))
+```

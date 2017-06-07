@@ -352,7 +352,7 @@ for (i in 1:perms_atac) {
 }
 
 # Calculate 95% confidence intervals based on the permutations
-names(l_permute_atac) <- paste0("perm", 1:perms)
+names(l_permute_atac) <- paste0("perm", 1:perms_atac)
 d_permute_atac <- ldply(l_permute_atac, .id = "permutation")
 # Remove NaN for final bin with zero eQTLs
 d_permute_atac <- d_permute_atac[!is.nan(d_permute_atac$enrichment), ]
@@ -395,7 +395,7 @@ d_auc_atac <- d_enrich_atac %>%
 d_permute_atac_auc <- d_permute_atac %>%
   group_by(permutation) %>%
   summarize(auc_raw = auc(x = index, y = enrichment),
-            auc_std = auc_raw - background,
+            auc_std = auc_raw - background_atac,
             enr_max = max(enrichment),
             enr_final = enrichment[length(enrichment)])
 boxplot(d_permute_atac_auc$auc_std)
