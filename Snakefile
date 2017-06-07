@@ -255,6 +255,23 @@ rule gemma:
     params: prefix_plink = dir_plink + "cardioqtl"
     shell: "Rscript scripts/run-gemma.R {input.counts} {input.tss} {input.pca} {input.relat} {params.prefix_plink} {window} {dir_pheno} {dir_plink} {dir_gemma}"
 
+# For plotting eQTLs, output number of major alleles for each
+# individual for each SNP
+rule export_plink_eqtl:
+    input: bed = dir_plink + "cardioqtl.bed",
+           bim = dir_plink + "cardioqtl.bim",
+           fam = dir_plink + "cardioqtl.fam",
+           top = dir_gemma + "top-pca-0.txt"
+    output: eqtl_list = dir_plink + "eqtl_list.txt",
+            raw = dir_plink + "allele-counts.raw"
+    params: prefix_in = dir_plink + "cardioqtl",
+            prefix_out = dir_plink + "allele-counts",
+    shell: "cut -f3 {input.top} | sed '1d' > {output.eqtl_list}; \
+            plink2 --bfile {params.prefix_in} \
+                   --extract {output.eqtl_list} \
+                   --recodeA \
+                   --out {params.prefix_out}"
+
 # Verify identity with verifyBamID ---------------------------------------------
 
 # Convert exons in SAF format to BED format. Duplicate exons are maintained.

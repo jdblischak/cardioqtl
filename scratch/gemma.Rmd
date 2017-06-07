@@ -33,7 +33,8 @@ f_gemma <- Sys.glob("../data/gemma/top-pca-*.txt")
 l_gemma <- list()
 for (f in f_gemma) {
   n <- f %>% basename %>% str_replace("top-", "") %>% str_replace(".txt", "")
-  # if (n %in% c("pca-40")) next
+  if (n == c("pca-0")) next
+  if (n == c("pca-0-backup")) n <- n %>% str_replace("-backup", "")
   l_gemma[[n]] <- read.delim(f, stringsAsFactors = FALSE)
 }
 d_gemma <- ldply(l_gemma, .id = "analysis")
@@ -229,9 +230,45 @@ p_dist_pc <- ggplot(d_gemma_tss %>% filter(analysis != "pca-40"),
 p_dist_pc
 ```
 
+## Add gene information
+
+```{r}
+top_eqtl <- d_gemma %>%
+  filter(analysis == "pca-0", p_bh < 0.10) %>%
+  select(gene)
+top_eqtl <- as.character(top_eqtl$gene)
+length(top_eqtl)
+```
+
+
+```{r biomart}
+library("biomaRt")
+ensembl <- useMart(host = "feb2014.archive.ensembl.org",
+                   biomart = "ENSEMBL_MART_ENSEMBL",
+                   dataset = "hsapiens_gene_ensembl")
+descript <- getBM(attributes = c("ensembl_gene_id",
+                                 "chromosome_name",
+                                 "external_gene_id",
+                                 "gene_biotype",
+                                 "source",
+                                 "description"),
+                  filters = "ensembl_gene_id",
+                  values = top_eqtl,
+                  mart = ensembl)
+descript
+detach("package:biomaRt")
+```
+
+Any cardiac troponin genes?
+
+```{r cardiac troponin}
+descript %>% filter(grepl("cardiac", description))
+descript %>% filter(grepl("troponin", description))
+descript %>% filter(grepl("mito", description))
+```
+
 ## Session information
 
 ```{r session-info}
 sessionInfo()
 ```
-

@@ -1,0 +1,119 @@
+---
+title: "We can map eQTLs in cardiomyocytes"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r knitr, include=FALSE, cache=FALSE}
+library("knitr")
+opts_chunk$set(echo = FALSE, message = FALSE, fig.path = "figure/")
+library("cowplot")
+library("ggplot2")
+library("qqman")
+library("readr")
+library("stringr")
+theme_set(theme_cowplot(font_size = 12))
+```
+
+With the induced pluripotent stem cells (iPSCs) we have developed in the lab, we are no longer limited to using immortalized cell lines or frozen tissues, but can instead perform dynamic experiments in clinically-relevant cell types isolated from many different individuals. These experiments will enable us to decipher the contribution of genetic variation to diverse phenotypes. One such model we are currently developing is iPSC-derived cardiomyocytes to study cardiovascular traits.
+
+
+
+```{r eqtl}
+eqtl <- read_delim("../data/gemma/top-pca-0.txt", skip = 1, delim = "\t",
+                   col_names = FALSE)
+colnames(eqtl) <- c("gene", "chr", "rs", "ps", "n_miss",
+                    "allele1", "allele0", "af", "beta",
+                    "se", "l_remle", "l_mle", "p_wald",
+                    "p_lrt", "p_score", "n_snps", "n_pcs")
+# Bonferroni-correction per gene for number of _cis_-SNPs tested.
+bonferroni <- function(p, n) {
+  # p - nominal p-value(s)
+  # n - number(s) of tests
+  stopifnot(is.numeric(p), p >= 0, p <= 1,
+            is.numeric(n), n > 0)
+  n_valid_len <- length(n) == 1 || length(n) == length(p)
+  if (!n_valid_len)
+    stop("n must be length 1 or the same length as p")
+  p_b <- pmin(1, p * n)
+  stopifnot(p_b <= 1)
+  return(p_b)
+}
+
+eqtl$p_bonf <- bonferroni(eqtl$p_lrt, eqtl$n_snps)
+# Benjamini-Hochberg correction across genes.
+eqtl$p_bh = p.adjust(eqtl$p_bonf, method = "BH")
+# QQ-plot - using code from qqman::qq
+d_qq <- data.frame(o = -log10(sort(eqtl$p_bh, decreasing = FALSE)),
+                   e = -log10(ppoints(length(eqtl$p_bh))))
+p_qq <- ggplot(d_qq, aes(x = e, y = o)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, col = "red") +
+  labs(x = expression(Expected ~ ~-log[10](italic(p))),
+       y = expression(Observed ~ ~-log[10](italic(p))))
+```
+
+To establish this cellular model to study the genetics of heart biology, we have initially performed expression quantitiative trait loci (eQTL) mapping in these cells. Specifically, we reprogrammed immortalized lymphoblastoid cell lines (LCLs) from 43 densely-genotyped individuals into iPSCs and subsequently differentiated the iPSCs to cardiomyocytes. We measured gene expression using RNA-seq. For each gene, we tested all SNPs within 1 megabase (MB) of the transcription start site (TSS) for an additive effect on gene expression using a likelihood ratio test implemented in the statistical software GEMMA (Zhou and Stephens, 2012). To control for multiple testing, we first applied a Bonferroni correction to account for the number of SNPs tested per gene. Second, after assigning the top eQTL to each gene, we used the Benjamini-Hochberg false discovery rate (FDR) procedure to control for the total number of genes tested for an eQTL. Of the `r nrow(eqtl)` Ensembl genes tested, `r sum(eqtl$p_bh < 0.10)` had a statistically significant eQTL effect.
+
+```{r tss}
+# Input TSS locations.
+tss <- read_tsv("../data/tss.txt", col_names = FALSE)
+colnames(tss) <- c("gene", "chr", "tss", "strand", "biotype")
+# Calculate distance between each eQTL and TSS.
+eqtl_tss <- merge(eqtl, tss)
+eqtl_tss$dist <- ifelse(eqtl_tss$strand == "+",
+                        eqtl_tss$ps - eqtl_tss$tss,
+                        -(eqtl_tss$ps - eqtl_tss$tss))
+eqtl_tss$sig <- eqtl_tss$p_bh < 0.10
+p_dist <- ggplot(eqtl_tss, aes(x = dist, color = sig)) +
+  geom_line(stat="density") +
+  scale_x_continuous(name = "Distance from TSS\n(upstream <- -> downstream)",
+                     breaks = seq(-10^6, 10^6, by = 50 * 10^4),
+                     labels = c("-1 Mb", "-500 kb", "TSS", "+500 kb", "+1 Mb"),
+                     limits = c(-10^6, 10^6)) +
+  theme(axis.text.x = element_text(angle = -45, hjust = 0.5, vjust = 0.75),
+        legend.position = "top") +
+  scale_color_discrete(name = "", labels = c("non-eQTL", "eQTL at 10% FDR")) +
+  labs(y = "Density")
+```
+
+```{r example-eqtl}
+# Identify eQTL with lowest p-value
+top_eqtl <- eqtl[which.min(eqtl$p_bh), c("gene", "rs")]
+# Obtain gene expression levels
+expr <- read.delim("../data/counts-normalized.txt", check.names = FALSE)
+# Get counts of major allele
+allele_counts <- read_delim("../data/plink/allele-counts.raw", delim = " ")
+stopifnot(colnames(expr) == allele_counts$IID)
+snp_col <- grep(top_eqtl$rs, colnames(allele_counts))
+stopifnot(length(snp_col) == 1)
+d_ex <- data.frame(e = as.numeric(expr[top_eqtl$gene, ]),
+                   a = unlist(allele_counts[, snp_col]))
+# Determine alleles from bim file
+snp_info <- system(sprintf("grep %s ../data/plink/cardioqtl.bim",
+                           top_eqtl$rs), intern = TRUE)
+snp_info <- str_split(snp_info, "\t")[[1]]
+major <- snp_info[5]
+minor <- snp_info[6]
+d_ex$g <- NA
+for (i in 1:nrow(d_ex)) {
+  if (d_ex$a[i] == 0) {
+    d_ex$g[i] <- paste0(minor, minor)
+  }
+  else if (d_ex$a[i] == 1) {
+    d_ex$g[i] <- paste0(major, minor)
+  }
+  else if (d_ex$a[i] == 2) {
+    d_ex$g[i] <- paste0(major, major)
+  }
+}
+p_ex <- ggplot(d_ex, aes(x = g, y = e)) +
+  geom_boxplot() +
+  labs(x = sprintf("Genotype at\n%s", top_eqtl$rs),
+       y = sprintf("Gene expression\nof %s", top_eqtl$gene))
+```
+
+```{r fig-eqtl, fig.width=9, fig.height=3, fig.cap="Figure 1. eQTL analysis."}
+plot_grid(p_qq, p_dist, p_ex, nrow = 1, labels = LETTERS[1:3])
+```
+
