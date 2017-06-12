@@ -12,14 +12,14 @@
 # https://snakemake.readthedocs.io/en/stable/snakefiles/deployment.html
 # https://conda.io/docs/using/envs.html#create-environment-file-by-hand
 # https://bioconda.github.io
-# https://anaconda.org/MarcosRodrigues/r-cowplot/files
+# https://anaconda.org/jdblischak/repo
 
 name: cardioqtl
 channels:
+  - jdblischak
   - bioconda
   - r
   - defaults
-  - marcosrodrigues
   - conda-forge
 dependencies:
   - bioconductor-biomart=2.28.0
@@ -32,6 +32,7 @@ dependencies:
   - r-cowplot=0.7.0
   - r-rcolorbrewer=1.1_2
   - r-dplyr=0.5.0
+  - r-flux=0.3
   - r-ggplot2=2.2.1
   - r-git2r=0.15.0
   - r-hmisc=3.17_4
