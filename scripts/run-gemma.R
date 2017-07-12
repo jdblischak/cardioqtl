@@ -168,7 +168,7 @@ create_plink_g <- function(prefix_in, f_pheno, chr, from, to, prefix_out) {
 }
 
 run_gemma <- function(plink, relatedness, pca, out_prefix, outdir) {
-  cmd <- sprintf("gemma -bfile %s -k %s -km 2 -c %s -lmm 2 -o %s",
+  cmd <- sprintf("gemma -bfile %s -k %s -km 2 -c %s -lmm 4 -o %s",
                  plink, relatedness, pca, out_prefix)
   system(cmd)
   # Move to output directory
